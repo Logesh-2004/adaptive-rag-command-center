@@ -1,0 +1,20 @@
+Retrieval-Augmented Generation (RAG)
+
+RAG is a technique that enhances large language models by retrieving relevant external information before generating responses.
+
+Key Components:
+- Embedding Model: Converts text into vector representations.
+- Vector Database: Stores embeddings for similarity search.
+- Retriever: Finds relevant documents based on query similarity.
+- Generator (LLM): Produces answers using retrieved context.
+
+Challenges:
+- Poor chunking reduces retrieval quality.
+- Irrelevant retrieval leads to hallucination.
+- Lack of evaluation makes systems unreliable.
+
+Best Practices:
+- Use overlapping chunks.
+- Tune top_k retrieval.
+- Apply reranking for better context selection.
+- Add evaluation layers to measure faithfulness.

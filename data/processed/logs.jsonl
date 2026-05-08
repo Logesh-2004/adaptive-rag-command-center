@@ -1,0 +1,8 @@
+{"timestamp": "2026-05-05T17:28:40.516284Z", "event_type": "ingest", "latency_ms": 17844.722199995886, "ingested_chunks": 6}
+{"timestamp": "2026-05-05T17:34:15.523583Z", "event_type": "ingest", "latency_ms": 339.6775999935926, "ingested_chunks": 6}
+{"timestamp": "2026-05-06T11:34:36.152907Z", "event_type": "ingest", "latency_ms": 643.8084000001254, "ingested_chunks": 6}
+{"timestamp": "2026-05-06T11:34:36.177441Z", "event_type": "improvement", "latency_ms": 0.14460000238614157, "weak_records": 0, "suggestions": ["Maintain current chunk size (500) and retrieval k (5)."]}
+{"timestamp": "2026-05-06T11:34:36.195632Z", "event_type": "feedback", "latency_ms": 1.9839000015053898, "query": "q", "rating": 5}
+{"timestamp": "2026-05-06T11:37:36.612545Z", "event_type": "ingest", "latency_ms": 624.7693999976036, "ingested_chunks": 6}
+{"timestamp": "2026-05-06T11:37:36.631498Z", "event_type": "improvement", "latency_ms": 0.1878000002761837, "weak_records": 0, "suggestions": ["Maintain current chunk size (500) and retrieval k (5)."]}
+{"timestamp": "2026-05-06T11:37:36.648372Z", "event_type": "feedback", "latency_ms": 1.72049999673618, "query": "q", "rating": 5}

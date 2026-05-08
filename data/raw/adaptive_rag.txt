@@ -1,0 +1,18 @@
+Adaptive RAG (Adaptive Retrieval-Augmented Generation) is an advanced form of RAG that dynamically adjusts retrieval and generation strategies based on query complexity, confidence, or evaluation signals.
+
+Unlike traditional RAG systems that always retrieve the same way, Adaptive RAG can:
+- Decide when retrieval is necessary
+- Dynamically rerank retrieved documents
+- Use evaluators to assess grounding and faithfulness
+- Trigger corrective retrieval if confidence is low
+- Route queries through different pipelines
+
+Key Components:
+- Query Router
+- Retriever
+- Reranker
+- Generator (LLM)
+- Evaluator
+- Feedback Loop
+
+Adaptive RAG improves answer quality, reduces hallucinations, and enables more reliable AI systems.

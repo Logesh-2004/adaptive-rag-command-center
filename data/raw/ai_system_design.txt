@@ -1,0 +1,21 @@
+AI System Design Principles
+
+Modern AI systems require more than just model inference.
+
+Key Principles:
+1. Modularity: Separate ingestion, retrieval, generation, and evaluation.
+2. Observability: Track latency, errors, and outputs.
+3. Reliability: Prevent hallucinations using grounding checks.
+4. Scalability: Handle increasing data and queries efficiently.
+
+Production AI systems often include:
+- Feedback loops for continuous improvement.
+- Monitoring dashboards.
+- Data versioning.
+
+Failure Modes:
+- Incorrect retrieval
+- Overconfidence in LLM outputs
+- Poor evaluation metrics
+
+A robust AI system must detect and handle its own failures.

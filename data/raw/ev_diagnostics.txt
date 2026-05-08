@@ -1,0 +1,25 @@
+Electric Vehicle Diagnostics
+
+Electric vehicles rely on battery systems, motor controllers, and embedded software.
+
+Common Issues:
+- Battery degradation due to temperature
+- Motor overheating
+- Sensor failures
+
+Diagnostics Process:
+1. Collect sensor logs
+2. Analyze anomalies
+3. Compare with known failure patterns
+
+AI in EV diagnostics:
+- Predictive maintenance using historical data
+- Fault detection using machine learning
+- Real-time monitoring systems
+
+Challenges:
+- Noisy sensor data
+- Real-time constraints
+- Need for high reliability
+
+Combining AI with domain knowledge improves diagnostic accuracy.

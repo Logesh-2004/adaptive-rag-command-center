@@ -1,0 +1,36 @@
+node_modules
+node_modules
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Env
+.env
+
+# Next.js
+.next/
+out/
+
+# Node
+node_modules/
+
+# Build
+dist/
+build/
+
+# Vector DB
+vector_db/
+chromadb/
+*.db
+*.sqlite3
+
+# Logs
+logs/
+*.log
+
+# Cache
+.cache/
+
+# TypeScript
+*.tsbuildinfo
