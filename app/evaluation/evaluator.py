@@ -1,13 +1,12 @@
-import json
 import re
 from collections import OrderedDict
-from datetime import datetime
 from hashlib import sha256
 from typing import Any, Dict, List, Sequence, Union
 
 from langchain_core.documents import Document
 
 from app.core.config import Settings
+from app.core.logger import append_jsonl, utc_timestamp
 
 _EVALUATION_CACHE: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 _MAX_EVALUATION_CACHE = 128
@@ -194,11 +193,9 @@ def judge_answer(query: str, context: Sequence[Union[str, Document]], answer: st
 
 
 def log_evaluation(query: str, documents: List[Document], answer: str, settings: Settings) -> Dict[str, Any]:
-    settings.processed_data_dir.mkdir(parents=True, exist_ok=True)
-    evaluation_path = settings.processed_data_dir / "evaluations.jsonl"
     evaluation = evaluate_answer(query, documents, answer, settings)
     payload = {
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": utc_timestamp(),
         "query": query,
         "answer": answer,
         "context": [doc.page_content for doc in documents],
@@ -206,7 +203,5 @@ def log_evaluation(query: str, documents: List[Document], answer: str, settings:
         "evaluation": evaluation,
     }
 
-    with evaluation_path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
-
+    append_jsonl(settings.processed_data_dir / "evaluations.jsonl", payload, settings.log_max_bytes)
     return evaluation

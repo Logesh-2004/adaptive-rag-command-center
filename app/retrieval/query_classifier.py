@@ -1,4 +1,6 @@
 from dataclasses import dataclass
+import json
+from pathlib import Path
 import re
 
 
@@ -12,7 +14,17 @@ class QueryPlan:
     rewritten_queries: list[str]
 
 
-def classify_query(query: str, base_top_k: int, base_retrieval_top_n: int) -> QueryPlan:
+QueryExpansions = dict[str, list[str]]
+
+_EXPANSION_CACHE: dict[str, tuple[float, QueryExpansions]] = {}
+
+
+def classify_query(
+    query: str,
+    base_top_k: int,
+    base_retrieval_top_n: int,
+    expansions: QueryExpansions | None = None,
+) -> QueryPlan:
     """Classify query intent with deterministic routing rules."""
     text = query.lower().strip()
     words = re.findall(r"[a-zA-Z0-9_-]+", text)
@@ -42,20 +54,44 @@ def classify_query(query: str, base_top_k: int, base_retrieval_top_n: int) -> Qu
         top_k = max(base_top_k, 8)
         retrieval_top_n = max(base_retrieval_top_n, 4)
 
-    rewritten_queries = expand_query(query)
+    rewritten_queries = expand_query(query, expansions or {})
     return QueryPlan(query_type, round(complexity, 3), top_k, retrieval_top_n, multi_hop, rewritten_queries)
 
 
-def expand_query(query: str) -> list[str]:
-    """Expand queries with deterministic lexical terms for retrieval."""
+def expand_query(query: str, expansions: QueryExpansions) -> list[str]:
+    """Add one rewrite per configured expansion whose phrase appears in the query."""
     rewrites = [query]
     lower = query.lower()
-    if "adaptive rag" in lower:
-        rewrites.append("adaptive retrieval augmented generation")
-        rewrites.append("corrective rag self reflective rag dynamic retrieval rag")
-        rewrites.append(query + " adaptive retrieval feedback reranking evaluation corrective self-reflective")
-    elif "rag" in lower:
-        rewrites.append(query + " retrieval augmented generation grounding hallucination mitigation")
-    if "hallucination" in lower:
-        rewrites.append(query + " unsupported claims grounding faithfulness corrective retrieval")
+    for phrase, additions in expansions.items():
+        # Whole-word match, allowing a plural "s" ("hallucinations" matches "hallucination").
+        if re.search(rf"(?<![a-z0-9]){re.escape(phrase)}s?(?![a-z0-9])", lower):
+            rewrites.extend(f"{query} {addition}" for addition in additions)
     return list(dict.fromkeys(rewrites))
+
+
+def load_query_expansions(path: Path) -> QueryExpansions:
+    """Read the phrase -> expansion terms map, reloading only when the file changes."""
+    try:
+        modified = path.stat().st_mtime
+    except OSError:
+        return {}
+    key = str(path.resolve())
+    cached = _EXPANSION_CACHE.get(key)
+    if cached is not None and cached[0] == modified:
+        return cached[1]
+
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    expansions: QueryExpansions = {}
+    if isinstance(raw, dict):
+        for phrase, value in raw.items():
+            if str(phrase).startswith("_"):
+                continue
+            values = value if isinstance(value, list) else [value]
+            cleaned = [str(item).strip() for item in values if str(item).strip()]
+            if cleaned:
+                expansions[str(phrase).lower().strip()] = cleaned
+    _EXPANSION_CACHE[key] = (modified, expansions)
+    return expansions

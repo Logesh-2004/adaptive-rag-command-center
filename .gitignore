@@ -34,3 +34,5 @@ logs/
 
 # TypeScript
 *.tsbuildinfo
+# Runtime telemetry (kept locally, not committed)
+data/processed/*.jsonl

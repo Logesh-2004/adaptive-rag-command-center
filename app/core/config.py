@@ -20,14 +20,19 @@ class Settings(BaseSettings):
     )
     raw_data_dir: Path = Field(default_factory=lambda: Path("data/raw"), validation_alias="RAW_DATA_DIR")
     processed_data_dir: Path = Field(default_factory=lambda: Path("data/processed"), validation_alias="PROCESSED_DATA_DIR")
+    query_expansions_path: Path = Field(
+        default_factory=lambda: Path("data/query_expansions.json"), validation_alias="QUERY_EXPANSIONS_PATH"
+    )
     chunk_size: int = Field(800, validation_alias="CHUNK_SIZE", ge=100)
     chunk_overlap: int = Field(120, validation_alias="CHUNK_OVERLAP", ge=0)
     retrieval_top_k: int = Field(3, validation_alias="RETRIEVAL_TOP_K", ge=1)
     retrieval_top_n: int = Field(2, validation_alias="RETRIEVAL_TOP_N", ge=1)
-    llm_temperature: float = Field(0.1, validation_alias="LLM_TEMPERATURE", ge=0.0, le=1.0)
+    llm_temperature: float = Field(0.05, validation_alias="LLM_TEMPERATURE", ge=0.0, le=1.0)
     generation_num_predict: int = Field(512, validation_alias="GENERATION_MAX_TOKENS", ge=32)
     grounding_overlap_threshold: float = Field(0.2, validation_alias="GROUNDING_OVERLAP_THRESHOLD", ge=0.0, le=1.0)
     retrieval_confidence_threshold: float = Field(0.2, validation_alias="RETRIEVAL_CONFIDENCE_THRESHOLD", ge=0.0, le=1.0)
+    rag_debug_logs: bool = Field(False, validation_alias="RAG_DEBUG_LOGS")
+    log_max_bytes: int = Field(5 * 1024 * 1024, validation_alias="LOG_MAX_BYTES", ge=1024)
 
     @property
     def active_generation_model(self) -> str:
@@ -55,4 +60,5 @@ def get_settings() -> Settings:
     settings.lexical_index_path = _path_from_env(str(settings.lexical_index_path))
     settings.raw_data_dir = _path_from_env(str(settings.raw_data_dir))
     settings.processed_data_dir = _path_from_env(str(settings.processed_data_dir))
+    settings.query_expansions_path = _path_from_env(str(settings.query_expansions_path))
     return settings

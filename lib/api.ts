@@ -1,6 +1,8 @@
 import type {
   EvaluationResponse,
+  FeedbackResponse,
   ImprovementResponse,
+  IngestResponse,
   QueryResponse,
   RetrievalDebugResponse,
   StatusResponse,
@@ -97,5 +99,15 @@ export const ragApi = {
     request<ImprovementResponse>("/improve", {
       method: "POST",
       body: JSON.stringify({}),
+    }),
+  ingest: () =>
+    request<IngestResponse>("/ingest", {
+      method: "POST",
+      body: JSON.stringify({}),
+    }),
+  feedback: (query: string, answer: string, rating: number, comment?: string) =>
+    request<FeedbackResponse>("/feedback", {
+      method: "POST",
+      body: JSON.stringify({ query, answer, rating, comment: comment || null }),
     }),
 };

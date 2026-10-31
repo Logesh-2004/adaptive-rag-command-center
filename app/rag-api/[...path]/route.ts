@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
+// Server-only: read in this route handler, never shipped to the browser.
+// NEXT_PUBLIC_API_BASE_URL is still accepted for existing setups.
+const BACKEND_URL = process.env.RAG_BACKEND_URL || process.env.NEXT_PUBLIC_API_BASE_URL || "http://127.0.0.1:8000";
 
 async function proxy(request: NextRequest, segments: string[]) {
   const upstreamUrl = `${BACKEND_URL.replace(/\/$/, "")}/${segments.join("/")}${request.nextUrl.search}`;

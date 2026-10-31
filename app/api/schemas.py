@@ -20,6 +20,7 @@ class TimingMetrics(BaseModel):
     ranking_ms: float = 0.0
     generation_ms: float = 0.0
     evaluation_ms: float = 0.0
+    correction_ms: float = 0.0
     total_ms: float = 0.0
 
 
@@ -27,6 +28,7 @@ class QueryResponse(BaseModel):
     query: str
     answer: str
     sources: List[str]
+    initial_sources: List[str] = Field(default_factory=list)
     warning: Optional[str] = None
     evaluation: Optional[dict] = None
     timings: TimingMetrics = Field(default_factory=TimingMetrics)
@@ -92,7 +94,7 @@ class RetrievalDebugResponse(BaseModel):
 class FeedbackRequest(BaseModel):
     query: str
     answer: str
-    rating: int
+    rating: int = Field(..., ge=1, le=5, description="1 (poor) to 5 (good)")
     comment: Optional[str] = None
 
 

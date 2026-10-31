@@ -12,6 +12,7 @@ export type QueryResponse = {
   query: string;
   answer: string;
   sources: string[];
+  initial_sources?: string[];
   warning?: string | null;
   evaluation?: EvaluationPayload | null;
   timings: TimingMetrics;
@@ -32,6 +33,7 @@ export type AdaptiveTrace = {
   top_k?: number;
   retrieval_top_n?: number;
   rewritten_queries?: string[];
+  feedback_terms?: string[];
   retrieval_confidence?: number;
   retrieval_channels?: string[];
   corrective_attempts?: Array<Record<string, unknown>>;
@@ -55,6 +57,7 @@ export type TimingMetrics = {
   ranking_ms: number;
   generation_ms: number;
   evaluation_ms: number;
+  correction_ms?: number;
   total_ms: number;
 };
 
@@ -91,6 +94,20 @@ export type RetrievalDebugResponse = {
   trace?: AdaptiveTrace | null;
   timings: TimingMetrics;
   warning?: string | null;
+};
+
+export type IngestResponse = {
+  status: string;
+  indexed_documents: number;
+  chunks_created: number;
+  ingested_chunks: number;
+  message?: string | null;
+  warnings: string[];
+};
+
+export type FeedbackResponse = {
+  status: string;
+  message: string;
 };
 
 export type ImprovementResponse = {
