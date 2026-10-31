@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, RefreshCw, Route, WandSparkles } from "lucide-react";
-import { ChatConsole } from "@/components/chat-console";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, RefreshCw, Route, SlidersHorizontal } from "lucide-react";
+import { ChatConsole, type JourneyStage } from "@/components/chat-console";
 import { EvaluationPanel } from "@/components/evaluation-panel";
 import { ArchitectureMap } from "@/components/architecture-map";
 import { LogsViewer } from "@/components/logs-viewer";
@@ -37,8 +37,10 @@ export default function DashboardPage() {
   const [improvement, setImprovement] = useState<ImprovementResponse | null>(null);
   const [lastQuery, setLastQuery] = useState("What is adaptive RAG?");
   const [latency, setLatency] = useState<number | null>(null);
+  const [journeyStage, setJourneyStage] = useState<JourneyStage>("idle");
   const [loading, setLoading] = useState({ status: false, query: false, retrieval: false, improve: false });
   const [events, setEvents] = useState<ActivityEvent[]>([]);
+  const arrivalTimer = useRef<number | null>(null);
   const { messages, toast, dismiss } = useToast();
 
   const addEvent = useCallback((event: Omit<ActivityEvent, "id" | "time">) => {
@@ -56,8 +58,8 @@ export default function DashboardPage() {
       addEvent({
         type: "system",
         title: "Status refreshed",
-        detail: `Vector DB ${payload.vector_db_exists ? "ready" : "missing"} with ${payload.indexed_documents} indexed chunks.`,
-        severity: payload.vector_db_exists ? "success" : "warning",
+        detail: `BM25 index ${payload.lexical_index_exists ? "ready" : "missing"} with ${payload.indexed_chunks} indexed chunks.`,
+        severity: payload.lexical_index_exists ? "success" : "warning",
       });
     } catch (error) {
       toast({ title: "Status request failed", description: String(error), variant: "destructive" });
@@ -71,6 +73,10 @@ export default function DashboardPage() {
     refreshStatus();
   }, [refreshStatus]);
 
+  useEffect(() => () => {
+    if (arrivalTimer.current !== null) window.clearTimeout(arrivalTimer.current);
+  }, []);
+
   const runRetrievalTrace = useCallback(
     async (query = lastQuery) => {
       setLoading((current) => ({ ...current, retrieval: true }));
@@ -80,7 +86,7 @@ export default function DashboardPage() {
         addEvent({
           type: payload.warning ? "warning" : "retrieval",
           title: "Retrieval trace complete",
-          detail: payload.warning || `${payload.initial_documents.length} retrieved, ${payload.reranked_documents.length} reranked.`,
+          detail: payload.warning || `${payload.initial_documents.length} retrieved, ${payload.ranked_documents.length} ranked.`,
           severity: payload.warning ? "warning" : "success",
         });
       } catch (error) {
@@ -95,70 +101,85 @@ export default function DashboardPage() {
 
   const runQuery = useCallback(
     async (query: string) => {
+      if (arrivalTimer.current !== null) window.clearTimeout(arrivalTimer.current);
+      arrivalTimer.current = null;
+      setJourneyStage("launching");
       setLastQuery(query);
       setLoading((current) => ({ ...current, query: true }));
       setLatency(null);
+      setEvaluation(null);
+      setRetrieval(null);
       const started = performance.now();
       setQueryResponse({
         query,
         answer: "",
         sources: [],
-        timings: { retrieval_ms: 0, rerank_ms: 0, generation_ms: 0, evaluation_ms: 0, total_ms: 0 },
+        timings: { retrieval_ms: 0, ranking_ms: 0, generation_ms: 0, evaluation_ms: 0, total_ms: 0 },
         relevance_scores: [],
         retrieval_score_trace: [],
       });
+      let receivedDone = false;
       try {
         await ragApi.streamQuery(query, (event) => {
           const elapsed = Math.round(performance.now() - started);
           setLatency(Math.round(event.timings?.total_ms || event.timings?.generation_ms || elapsed));
 
           if (event.type === "retrieval") {
+            setJourneyStage("retrieving");
             setRetrieval({
               query,
               initial_documents: event.sources ?? [],
-              reranked_documents: [],
+              ranked_documents: [],
               relevance_scores: [],
               retrieval_score_trace: [],
-              timings: event.timings ?? { retrieval_ms: 0, rerank_ms: 0, generation_ms: 0, evaluation_ms: 0, total_ms: 0 },
+              timings: event.timings ?? { retrieval_ms: 0, ranking_ms: 0, generation_ms: 0, evaluation_ms: 0, total_ms: 0 },
               warning: null,
             });
           }
 
-          if (event.type === "rerank") {
+          if (event.type === "rank") {
+            setJourneyStage("crossing");
             setRetrieval((current) => ({
               query,
               initial_documents: current?.initial_documents ?? event.sources ?? [],
-              reranked_documents: event.sources ?? [],
+              ranked_documents: event.sources ?? [],
               relevance_scores: event.relevance_scores ?? [],
               retrieval_score_trace: event.retrieval_score_trace ?? [],
-              rerank_model: event.rerank_model,
+              retrieval_strategy: event.retrieval_strategy,
               trace: event.trace,
-              timings: event.timings ?? current?.timings ?? { retrieval_ms: 0, rerank_ms: 0, generation_ms: 0, evaluation_ms: 0, total_ms: 0 },
+              timings: event.timings ?? current?.timings ?? { retrieval_ms: 0, ranking_ms: 0, generation_ms: 0, evaluation_ms: 0, total_ms: 0 },
               warning: null,
             }));
           }
 
           if (event.type === "token") {
+            setJourneyStage("generating");
             setQueryResponse((current) => ({
               query,
               answer: `${current?.answer ?? ""}${event.token}`,
               sources: current?.sources ?? [],
-              timings: event.timings ?? current?.timings ?? { retrieval_ms: 0, rerank_ms: 0, generation_ms: 0, evaluation_ms: 0, total_ms: 0 },
+              timings: event.timings ?? current?.timings ?? { retrieval_ms: 0, ranking_ms: 0, generation_ms: 0, evaluation_ms: 0, total_ms: 0 },
               relevance_scores: current?.relevance_scores ?? [],
               retrieval_score_trace: current?.retrieval_score_trace ?? [],
-              rerank_model: current?.rerank_model,
+              retrieval_strategy: current?.retrieval_strategy,
             }));
           }
 
           if (event.type === "done") {
+            receivedDone = true;
+            setJourneyStage("landing");
+            arrivalTimer.current = window.setTimeout(() => {
+              setJourneyStage("arrived");
+              arrivalTimer.current = null;
+            }, 750);
             setQueryResponse(event);
             setRetrieval({
               query,
               initial_documents: event.sources,
-              reranked_documents: event.sources,
+              ranked_documents: event.sources,
               relevance_scores: event.relevance_scores,
               retrieval_score_trace: event.retrieval_score_trace,
-              rerank_model: event.rerank_model,
+              retrieval_strategy: event.retrieval_strategy,
               trace: event.trace,
               timings: event.timings,
               warning: event.warning || null,
@@ -180,9 +201,13 @@ export default function DashboardPage() {
           }
         });
       } catch (error) {
+        if (arrivalTimer.current !== null) window.clearTimeout(arrivalTimer.current);
+        arrivalTimer.current = null;
+        setJourneyStage("error");
         toast({ title: "Query failed", description: String(error), variant: "destructive" });
         addEvent({ type: "error", title: "Query failed", detail: String(error), severity: "error" });
       } finally {
+        if (!receivedDone) setJourneyStage("error");
         setLoading((current) => ({ ...current, query: false }));
       }
     },
@@ -210,84 +235,100 @@ export default function DashboardPage() {
 
   const healthBadge = useMemo(() => {
     if (!status) return "Connecting";
-    if (!status.vector_db_exists) return "Index Required";
-    if (!status.ollama_running) return "Ollama Offline";
-    return "Operational";
+    if (!status.lexical_index_exists) return "Index Required";
+    if (!status.generation_provider_configured) return "Groq API Key Needed";
+    return "Configured";
   }, [status]);
 
   return (
     <ToastProvider messages={messages} onDismiss={dismiss}>
-      <div className="relative flex min-h-screen">
+      <a
+        href="#main-content"
+        className="sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-[100] focus:rounded-xl focus:bg-primary focus:px-4 focus:py-3 focus:font-semibold focus:text-primary-foreground"
+      >
+        Skip to main content
+      </a>
+      <div className="dashboard-shell relative flex min-h-dvh flex-col lg:flex-row">
         <Sidebar />
-        <main className="min-w-0 flex-1">
-          <header className="sticky top-0 z-30 border-b border-white/10 bg-background/70 px-4 py-4 backdrop-blur-2xl md:px-6">
-            <div className="flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge className="text-primary">
-                    <Activity className="mr-1 h-3.5 w-3.5" />
-                    {healthBadge}
-                  </Badge>
-                  <Badge>{status?.generation_model ?? "model pending"}</Badge>
-                  <Badge>{status?.rerank_model ?? "rerank pending"}</Badge>
-                  <Badge>{status?.evaluator_model ?? "evaluator pending"}</Badge>
-                </div>
-                <h1 className="mt-3 bg-gradient-to-r from-white via-cyan-100 to-slate-400 bg-clip-text text-2xl font-semibold tracking-normal text-transparent md:text-4xl">
-                  Adaptive RAG Command Center
-                </h1>
-                <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
-                  Observe retrieval quality, LLM degradation, evaluation signals, and index health from one operations surface.
-                </p>
+        <main id="main-content" className="dashboard-main min-w-0 flex-1" tabIndex={-1}>
+          <header className="workspace-topbar sticky top-0 z-30 px-4 py-3 md:px-8">
+            <div className="mx-auto flex max-w-[1680px] items-center justify-between gap-4">
+              <div className="flex min-w-0 items-center gap-3 text-sm">
+                <span className="font-mono text-xs tracking-[0.18em] text-primary">AR / 01</span>
+                <span className="hidden h-4 w-px bg-white/15 sm:block" />
+                <span className="truncate text-muted-foreground">Knowledge workspace</span>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={refreshStatus} disabled={loading.status}>
-                  <RefreshCw className={loading.status ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
-                  Status
-                </Button>
-                <Button variant="secondary" onClick={runImprove} disabled={loading.improve}>
-                  <WandSparkles className={loading.improve ? "h-4 w-4 animate-pulse" : "h-4 w-4"} />
-                  Improve
-                </Button>
-              </div>
+              <Badge className={status?.generation_provider_configured && status?.lexical_index_exists ? "gap-2 text-success" : "gap-2 text-warning"}>
+                <Activity aria-hidden="true" className="h-3.5 w-3.5" />
+                {healthBadge}
+              </Badge>
             </div>
           </header>
 
-          <div className="space-y-5 p-4 md:p-6">
-            <PipelineVisualizer active={loading.query || Boolean(queryResponse?.answer)} />
+          <div className="dashboard-content space-y-5 p-4 md:p-6 xl:p-8">
+            <section className="workspace-intro">
+              <div>
+                <p className="section-kicker">Mission control · Knowledge relay</p>
+                <h1 className="workspace-title mt-3">Adaptive RAG</h1>
+                <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground md:text-base">
+                  Launch a question through your local corpus, follow the retrieval layers, and bring a grounded answer back to the dock.
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2 pt-4 sm:pt-0">
+                <Button variant="outline" onClick={refreshStatus} disabled={loading.status}>
+                  <RefreshCw aria-hidden="true" className={loading.status ? "h-4 w-4 animate-spin" : "h-4 w-4"} />
+                  Refresh
+                </Button>
+                <Button variant="secondary" onClick={runImprove} disabled={loading.improve}>
+                  <SlidersHorizontal aria-hidden="true" className={loading.improve ? "h-4 w-4 animate-pulse" : "h-4 w-4"} />
+                  Review tuning
+                </Button>
+              </div>
+            </section>
+
             <StatusPanel status={status} loading={loading.status} />
 
-            <div className="grid gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(360px,0.85fr)]">
-              <ChatConsole response={queryResponse} loading={loading.query} latency={latency} onSubmit={runQuery} />
-              <div className="space-y-5">
-                <EvaluationPanel evaluation={evaluation} loading={loading.query} />
-                <Card>
-                  <CardHeader>
-                    <div className="flex items-center justify-between gap-3">
-                      <CardTitle className="flex items-center gap-2">
-                        <Route className="h-4 w-4 text-primary" />
-                        Improvement Notes
-                      </CardTitle>
-                      <Badge>{improvement?.weak_records ?? 0} weak</Badge>
+            <ChatConsole
+              response={queryResponse}
+              loading={loading.query}
+              latency={latency}
+              journeyStage={journeyStage}
+              onSubmit={runQuery}
+            />
+
+            <div className="grid items-stretch gap-5 xl:grid-cols-[minmax(0,1.15fr)_minmax(300px,0.85fr)]">
+              <EvaluationPanel evaluation={evaluation} loading={loading.query} />
+              <Card className="h-full">
+                <CardHeader className="space-y-0">
+                  <p className="section-kicker">Tuning history</p>
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle className="flex items-center gap-2">
+                      <Route aria-hidden="true" className="h-4 w-4 text-primary" />
+                      Refinement notes
+                    </CardTitle>
+                    <Badge>{improvement ? `${improvement.weak_records} weak` : "Not run"}</Badge>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3 pt-0 text-sm text-muted-foreground">
+                  <p>{improvement?.summary ?? "Review evaluation history for retrieval drift and tuning opportunities."}</p>
+                  {improvement?.suggestions?.length ? (
+                    <div className="space-y-2">
+                      {improvement.suggestions.map((suggestion) => (
+                        <div key={suggestion} className="depth-card p-3">
+                          {suggestion}
+                        </div>
+                      ))}
                     </div>
-                  </CardHeader>
-                  <CardContent className="space-y-3 text-sm text-muted-foreground">
-                    <p>{improvement?.summary ?? "Run an improvement scan to inspect evaluation drift and tuning suggestions."}</p>
-                    {improvement?.suggestions?.length ? (
-                      <div className="space-y-2">
-                        {improvement.suggestions.map((suggestion) => (
-                          <div key={suggestion} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
-                            {suggestion}
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </CardContent>
-                </Card>
-              </div>
+                  ) : null}
+                </CardContent>
+              </Card>
             </div>
 
-            <RetrievalInspector retrieval={retrieval} loading={loading.retrieval} onRefresh={() => runRetrievalTrace()} />
-            <ArchitectureMap />
+            <PipelineVisualizer active={loading.query} />
+            <div className="grid items-start gap-5 2xl:grid-cols-2">
+              <RetrievalInspector retrieval={retrieval} loading={loading.retrieval} onRefresh={() => runRetrievalTrace()} />
+              <ArchitectureMap />
+            </div>
             <LogsViewer events={events} />
           </div>
         </main>

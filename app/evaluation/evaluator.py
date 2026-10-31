@@ -1,5 +1,4 @@
 import json
-import math
 import re
 from collections import OrderedDict
 from datetime import datetime
@@ -9,33 +8,12 @@ from typing import Any, Dict, List, Sequence, Union
 from langchain_core.documents import Document
 
 from app.core.config import Settings
-from app.retrieval.vector_store import get_embeddings
 
 _EVALUATION_CACHE: OrderedDict[str, Dict[str, Any]] = OrderedDict()
 _MAX_EVALUATION_CACHE = 128
-_EMBEDDING_TEXT_CACHE: OrderedDict[str, List[float]] = OrderedDict()
-_MAX_EMBEDDING_TEXT_CACHE = 512
 _STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "are",
-    "as",
-    "at",
-    "be",
-    "by",
-    "for",
-    "from",
-    "in",
-    "is",
-    "it",
-    "of",
-    "on",
-    "or",
-    "that",
-    "the",
-    "to",
-    "with",
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on",
+    "or", "that", "the", "to", "with",
 }
 
 
@@ -55,30 +33,6 @@ def _clamp_score(value: Any) -> float:
 
 def _tokens(text: str) -> set[str]:
     return {token for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", text.lower()) if token not in _STOPWORDS}
-
-
-def _cosine(left: List[float], right: List[float]) -> float:
-    dot = sum(a * b for a, b in zip(left, right))
-    left_norm = math.sqrt(sum(a * a for a in left))
-    right_norm = math.sqrt(sum(b * b for b in right))
-    if not left_norm or not right_norm:
-        return 0.0
-    return max(0.0, min(1.0, dot / (left_norm * right_norm)))
-
-
-def _embed_text(text: str, settings: Settings) -> List[float]:
-    key = sha256(f"{settings.embedding_model}\n{text}".encode("utf-8")).hexdigest()
-    cached = _EMBEDDING_TEXT_CACHE.get(key)
-    if cached is not None:
-        _EMBEDDING_TEXT_CACHE.move_to_end(key)
-        return cached
-
-    vector = get_embeddings(settings).embed_query(text)
-    _EMBEDDING_TEXT_CACHE[key] = vector
-    _EMBEDDING_TEXT_CACHE.move_to_end(key)
-    while len(_EMBEDDING_TEXT_CACHE) > _MAX_EMBEDDING_TEXT_CACHE:
-        _EMBEDDING_TEXT_CACHE.popitem(last=False)
-    return vector
 
 
 def _has_basic_contradiction(answer: str, context_text: str) -> bool:
@@ -116,51 +70,35 @@ def validate_grounding(
     answer: str,
     settings: Settings,
 ) -> Dict[str, Any]:
-    """Validate grounding with semantic similarity, overlap, and contradiction checks."""
+    """Estimate grounding from lexical overlap and simple contradiction patterns."""
     context_items = [doc.page_content if isinstance(doc, Document) else str(doc) for doc in context]
     context_text = "\n\n".join(context_items)
     if not answer.strip() or not context_text.strip():
-        return {"grounding_score": 0.0, "grounding": 0.0, "grounded": False, "grounding_method": "heuristic"}
-
-    answer_vector = _embed_text(answer[:1200], settings)
-    context_vector = _embed_text(context_text[:2200], settings)
-    combined_similarity = _cosine(answer_vector, context_vector)
-    chunk_similarity = max(
-        (_cosine(answer_vector, _embed_text(item[:1200], settings)) for item in context_items if item.strip()),
-        default=0.0,
-    )
-    semantic_score = max(combined_similarity, chunk_similarity)
+        return {"grounding_score": 0.0, "grounding": 0.0, "grounded": False, "grounding_method": "token_overlap"}
 
     answer_tokens = _tokens(answer)
     context_tokens = _tokens(context_text)
     query_tokens = _tokens(query)
-    keyword_overlap = len(answer_tokens & context_tokens) / max(1, len(answer_tokens))
+    answer_overlap = len(answer_tokens & context_tokens) / max(1, len(answer_tokens))
     query_context_overlap = len(query_tokens & context_tokens) / max(1, len(query_tokens))
-    concept_bridge = min(1.0, (keyword_overlap * 0.7) + (query_context_overlap * 0.3))
+    grounding_score = min(1.0, 0.75 * answer_overlap + 0.25 * query_context_overlap)
     contradiction = _has_basic_contradiction(answer, context_text)
-    grounding_score = max(semantic_score, concept_bridge)
-    grounded = (
-        not contradiction
-        and (
-            semantic_score >= settings.grounding_similarity_threshold
-            or keyword_overlap >= settings.grounding_overlap_threshold
-            or (semantic_score >= 0.52 and concept_bridge >= 0.30)
-        )
+    grounded = not contradiction and (
+        answer_overlap >= settings.grounding_overlap_threshold
+        or (answer_overlap >= 0.12 and query_context_overlap >= 0.5)
     )
     return {
         "grounding_score": round(float(grounding_score), 4),
         "grounding": round(float(grounding_score), 4),
         "grounded": grounded,
-        "semantic_similarity": round(float(semantic_score), 4),
-        "keyword_overlap": round(float(keyword_overlap), 4),
+        "keyword_overlap": round(float(answer_overlap), 4),
         "contradiction_detected": contradiction,
-        "grounding_method": "heuristic",
+        "grounding_method": "token_overlap",
     }
 
 
-def _evaluation_cache_key(query: str, context_text: str, answer: str, settings: Settings) -> str:
-    payload = f"heuristic-v3\n{settings.embedding_model}\n{query}\n{context_text}\n{answer}"
-    return sha256(payload.encode("utf-8")).hexdigest()
+def _evaluation_cache_key(query: str, context_text: str, answer: str) -> str:
+    return sha256(f"lexical-v1\n{query}\n{context_text}\n{answer}".encode("utf-8")).hexdigest()
 
 
 def _remember_evaluation(key: str, evaluation: Dict[str, Any]) -> None:
@@ -170,13 +108,7 @@ def _remember_evaluation(key: str, evaluation: Dict[str, Any]) -> None:
         _EVALUATION_CACHE.popitem(last=False)
 
 
-def _risk_from_scores(
-    grounding: Dict[str, Any],
-    faithfulness: float,
-    relevance: float,
-    retrieval_confidence: float,
-    settings: Settings,
-) -> str:
+def _risk_from_scores(grounding: Dict[str, Any], faithfulness: float, relevance: float, retrieval_confidence: float, settings: Settings) -> str:
     if grounding.get("contradiction_detected"):
         return "high"
     if faithfulness >= 0.45 and relevance >= 0.30 and retrieval_confidence >= settings.retrieval_confidence_threshold:
@@ -187,16 +119,16 @@ def _risk_from_scores(
 
 
 def evaluate_answer(query: str, context: Sequence[Union[str, Document]], answer: str, settings: Settings) -> Dict[str, Any]:
-    """Deterministically evaluate RAG quality without LLM calls."""
+    """Deterministically score answer grounding and relevance with lexical checks."""
     context_text = _context_to_text(context)
-    key = _evaluation_cache_key(query, context_text, answer, settings)
+    key = _evaluation_cache_key(query, context_text, answer)
     cached = _EVALUATION_CACHE.get(key)
     if cached is not None:
         _EVALUATION_CACHE.move_to_end(key)
         return dict(cached)
 
     grounding = validate_grounding(query, context, answer, settings)
-    unsupported_sentences = _unsupported_sentences(answer, context, settings)
+    unsupported_sentences = _unsupported_sentences(answer, context)
     retrieval_confidence = _average_relevance(context)
     query_tokens = _tokens(query)
     query_answer_overlap = len(query_tokens & _tokens(answer)) / max(1, len(query_tokens))
@@ -212,14 +144,14 @@ def evaluate_answer(query: str, context: Sequence[Union[str, Document]], answer:
         "context_precision": round(retrieval_confidence, 4),
         "context_recall": round(max(query_context_overlap, grounding["keyword_overlap"]), 4),
         "hallucination_score": round(1.0 - faithfulness, 4),
-        "semantic_grounding_score": grounding["grounding_score"],
+        "lexical_grounding_score": grounding["grounding_score"],
         "retrieval_diversity_score": _diversity_score(context),
         "unsupported_sentences": unsupported_sentences,
         "repair_recommended": bool(unsupported_sentences) or hallucination_risk == "high",
         "retrieval_confidence": round(retrieval_confidence, 4),
         "hallucination_risk": hallucination_risk,
         "summary": (
-            f"Heuristic evaluation: grounding={grounding['grounding_score']:.2f}, "
+            f"Lexical evaluation: grounding={grounding['grounding_score']:.2f}, "
             f"retrieval_confidence={retrieval_confidence:.2f}, risk={hallucination_risk}."
         ),
     }
@@ -227,11 +159,10 @@ def evaluate_answer(query: str, context: Sequence[Union[str, Document]], answer:
     return evaluation
 
 
-def _unsupported_sentences(answer: str, context: Sequence[Union[str, Document]], settings: Settings) -> list[str]:
-    context_text = _context_to_text(context)
-    if not context_text.strip():
+def _unsupported_sentences(answer: str, context: Sequence[Union[str, Document]]) -> list[str]:
+    context_tokens = _tokens(_context_to_text(context))
+    if not context_tokens:
         return [sentence.strip() for sentence in re.split(r"(?<=[.!?])\s+", answer) if sentence.strip()]
-    context_tokens = _tokens(context_text)
     unsupported = []
     for sentence in re.split(r"(?<=[.!?])\s+", answer):
         sentence = sentence.strip()
@@ -239,8 +170,7 @@ def _unsupported_sentences(answer: str, context: Sequence[Union[str, Document]],
             continue
         sentence_tokens = _tokens(sentence)
         overlap = len(sentence_tokens & context_tokens) / max(1, len(sentence_tokens))
-        semantic = _cosine(_embed_text(sentence[:700], settings), _embed_text(context_text[:2200], settings))
-        if overlap < 0.12 and semantic < 0.35:
+        if overlap < 0.12:
             unsupported.append(sentence)
     return unsupported[:3]
 

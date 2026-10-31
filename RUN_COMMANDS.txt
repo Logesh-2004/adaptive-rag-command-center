@@ -1,0 +1,45 @@
+Adaptive RAG System — Windows PowerShell commands
+=================================================
+
+Run the backend and dashboard in two separate PowerShell terminals.
+The backend reads GROQ_API_KEY from the project's .env file.
+
+ONE-TIME SETUP (or after dependency changes)
+--------------------------------------------
+Open PowerShell in the project folder and run:
+
+Set-Location -LiteralPath "C:\Users\Logesh\project\adaptive-rag-system"
+if (-not (Test-Path .venv\Scripts\python.exe)) { py -3 -m venv .venv }
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+npm install
+
+
+TERMINAL 1 — BACKEND
+--------------------
+Keep this terminal open while using the app:
+
+Set-Location -LiteralPath "C:\Users\Logesh\project\adaptive-rag-system"
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+
+Backend API docs: http://127.0.0.1:8000/docs
+Backend status:   http://127.0.0.1:8000/status
+
+
+TERMINAL 2 — DASHBOARD
+----------------------
+Keep this terminal open while using the app:
+
+Set-Location -LiteralPath "C:\Users\Logesh\project\adaptive-rag-system"
+npm run dev
+
+Dashboard: http://localhost:3000
+
+
+OPTIONAL — REBUILD THE DOCUMENT INDEX
+-------------------------------------
+Run this after adding/changing files in data\raw or changing chunk settings.
+Start the backend first, then run this in another PowerShell terminal:
+
+Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/ingest"
+
+The current BM25 index is stored at vector_db\bm25_store\chunks.json.

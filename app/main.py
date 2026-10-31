@@ -3,8 +3,6 @@ from fastapi.responses import JSONResponse
 from app.api.router import router
 from app.core.config import get_settings
 from app.core.logger import log_event
-from app.core.ollama import is_ollama_running, ollama_model_available
-from app.retrieval.retriever import get_cross_encoder
 
 app = FastAPI(
     title="Adaptive RAG System",
@@ -25,35 +23,11 @@ async def clean_http_exception_handler(request: Request, exc: HTTPException) -> 
 @app.on_event("startup")
 def validate_runtime_environment() -> None:
     settings = get_settings()
-    if not is_ollama_running(settings):
+    if not settings.groq_key_configured:
         log_event(
             settings,
             "startup_warning",
-            {"component": "ollama", "message": "Ollama is not reachable; local inference features are degraded."},
-        )
-        return
-    for model_name, role in (
-        (settings.generation_model, "generation"),
-        (settings.embedding_model, "embedding"),
-    ):
-        if not ollama_model_available(settings, model_name):
-            log_event(
-                settings,
-                "startup_warning",
-                {"component": "ollama", "model_role": role, "message": f"Ollama model '{model_name}' is not pulled."},
-            )
-    try:
-        get_cross_encoder(settings)
-        log_event(
-            settings,
-            "startup",
-            {"component": "reranker", "model_role": "rerank", "message": f"CrossEncoder '{settings.rerank_model}' loaded."},
-        )
-    except Exception as exc:
-        log_event(
-            settings,
-            "startup_warning",
-            {"component": "reranker", "model_role": "rerank", "message": str(exc)},
+            {"component": "groq", "message": "GROQ_API_KEY is not configured; hosted generation is unavailable."},
         )
 
 

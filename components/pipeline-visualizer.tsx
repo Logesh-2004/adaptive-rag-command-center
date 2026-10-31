@@ -1,47 +1,38 @@
-import { Bot, DatabaseZap, Filter, GitBranch, Radar, ShieldCheck, Sparkles } from "lucide-react";
+import { Cpu, Database, FileSearch, Layers2, MessageSquareText, ShieldCheck } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
 
 const stages = [
-  { label: "Query", icon: Sparkles },
-  { label: "Hybrid Retrieval", icon: DatabaseZap },
-  { label: "Semantic Filter", icon: Filter },
-  { label: "Reranker", icon: Radar },
-  { label: "Generator", icon: Bot },
-  { label: "Evaluator", icon: ShieldCheck },
-  { label: "Grounded Answer", icon: GitBranch },
+  { label: "Question", detail: "Your prompt", icon: MessageSquareText },
+  { label: "Retrieve", detail: "Local BM25", icon: Database },
+  { label: "Rank", detail: "Best passages", icon: FileSearch },
+  { label: "Compress", detail: "Focused context", icon: Layers2 },
+  { label: "Generate", detail: "Groq response", icon: Cpu },
+  { label: "Ground", detail: "Lexical checks", icon: ShieldCheck },
 ];
 
 export function PipelineVisualizer({ active }: { active?: boolean }) {
   return (
-    <Card>
-      <CardHeader className="pb-4">
-        <CardTitle className="flex items-center gap-2">
-          <GitBranch className="h-4 w-4 text-primary" />
-          Retrieval Pipeline
-        </CardTitle>
+    <Card className={active ? "pipeline-active" : undefined}>
+      <CardHeader className="flex flex-row items-center justify-between gap-4 pb-4 space-y-0">
+        <div>
+          <p className="section-kicker">Request path</p>
+          <CardTitle className="mt-1">From question to checked answer</CardTitle>
+        </div>
+        <Badge className={active ? "text-primary" : "text-muted-foreground"}>{active ? "In progress" : "6 stages"}</Badge>
       </CardHeader>
       <CardContent>
-        <div className="grid gap-3 lg:grid-cols-7">
-          {stages.map((stage, index) => (
-            <div key={stage.label} className="relative">
-              <div
-                className={cn(
-                  "depth-card flex min-h-24 flex-col items-center justify-center gap-2 p-3 text-center",
-                  active && index < 5 && "border-primary/30 bg-primary/[0.055]",
-                )}
-              >
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-primary/25 bg-primary/10 shadow-[0_0_26px_rgba(45,212,191,0.13)]">
-                  <stage.icon className="h-4 w-4 text-primary" />
-                </div>
-                <div className="text-xs font-semibold">{stage.label}</div>
-              </div>
-              {index < stages.length - 1 ? (
-                <div className="glow-line absolute left-[calc(100%+2px)] top-1/2 hidden h-px w-8 -translate-y-1/2 lg:block" />
-              ) : null}
-            </div>
+        <ol className="pipeline-track" aria-label="RAG request stages">
+          {stages.map((stage) => (
+            <li key={stage.label} className="pipeline-step flex flex-col items-start">
+              <span className="pipeline-node text-primary">
+                <stage.icon aria-hidden="true" className="h-4 w-4" />
+              </span>
+              <span className="mt-2 text-sm font-semibold leading-5 text-foreground">{stage.label}</span>
+              <span className="text-xs leading-5 text-muted-foreground">{stage.detail}</span>
+            </li>
           ))}
-        </div>
+        </ol>
       </CardContent>
     </Card>
   );

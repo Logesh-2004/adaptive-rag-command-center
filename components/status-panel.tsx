@@ -1,4 +1,4 @@
-import { Activity, BrainCircuit, Cpu, Database, Server } from "lucide-react";
+import { Activity, Database, Server } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { StatusResponse } from "@/types/api";
@@ -6,74 +6,56 @@ import type { StatusResponse } from "@/types/api";
 export function StatusPanel({ status, loading }: { status?: StatusResponse | null; loading: boolean }) {
   const items = [
     {
-      label: "Ollama",
-      value: status?.ollama_running ? "Running" : "Offline",
-      icon: Cpu,
-      active: Boolean(status?.ollama_running),
-    },
-    {
-      label: "Vector DB",
-      value: status?.vector_db_exists ? "Ready" : "Missing",
-      icon: Database,
-      active: Boolean(status?.vector_db_exists),
-    },
-    {
-      label: "Indexed",
-      value: String(status?.indexed_documents ?? 0),
-      icon: Activity,
-      active: Boolean((status?.indexed_documents ?? 0) > 0),
-    },
-    {
-      label: "Runtime",
-      value: status?.status ?? "checking",
+      label: "Generation",
+      value: status?.generation_provider_configured ? "Groq connected" : "API key required",
+      detail: status?.generation_model ?? "Waiting for model status",
       icon: Server,
-      active: status?.status === "running",
+      active: Boolean(status?.generation_provider_configured),
+    },
+    {
+      label: "Retrieval",
+      value: status?.lexical_index_exists ? "BM25 index ready" : "Index not built",
+      detail: status?.retrieval_strategy ?? "Local lexical search",
+      icon: Activity,
+      active: Boolean(status?.lexical_index_exists),
+    },
+    {
+      label: "Corpus",
+      value: `${(status?.indexed_chunks ?? 0).toLocaleString()} chunks`,
+      detail: "Passages available locally",
+      icon: Database,
+      active: Boolean((status?.indexed_chunks ?? 0) > 0),
     },
   ];
 
+  const configured = Boolean(status?.generation_provider_configured && status?.lexical_index_exists);
+
   return (
-    <Card id="status">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-3">
-          <CardTitle className="flex items-center gap-2">
-            <BrainCircuit className="h-4 w-4 text-primary" />
-            System Status
-          </CardTitle>
-          <Badge>{loading ? "Polling" : "Live"}</Badge>
+    <Card id="status" className="runtime-panel">
+      <CardHeader className="flex flex-row items-center justify-between gap-4 pb-4 space-y-0">
+        <div>
+          <p className="section-kicker">System health</p>
+          <CardTitle className="mt-1">Runtime</CardTitle>
         </div>
+        <Badge className={configured ? "gap-2 text-success" : "gap-2 text-warning"}>
+          <span className={configured ? "status-dot" : "h-2 w-2 rounded-full bg-warning"} aria-hidden="true" />
+          {loading ? "Checking" : configured ? "Configured" : status ? "Action needed" : "Waiting"}
+        </Badge>
       </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <CardContent>
+        <div className="grid gap-3 sm:grid-cols-3">
           {items.map((item) => (
-            <div key={item.label} className="depth-card p-4">
-              <div className="flex items-center justify-between">
-                <span className="metric-label">{item.label}</span>
-                <div className="flex items-center gap-2">
-                  {item.active ? <span className="status-dot" /> : null}
-                  <item.icon className={item.active ? "h-4 w-4 text-primary" : "h-4 w-4 text-muted-foreground"} />
-                </div>
+            <div key={item.label} className="runtime-tile depth-card flex min-w-0 items-start justify-between gap-3 p-4 md:p-5">
+              <div className="min-w-0">
+                <p className="metric-label">{item.label}</p>
+                <p className="mt-3 text-base font-semibold leading-6 text-foreground md:text-lg">{item.value}</p>
+                <p className="mt-1 break-words text-xs leading-5 text-muted-foreground">{item.detail}</p>
               </div>
-              <div className="mt-3 text-lg font-semibold">{item.value}</div>
+              <span className={item.active ? "runtime-icon text-primary" : "runtime-icon text-muted-foreground"}>
+                <item.icon aria-hidden="true" className="h-4 w-4" />
+              </span>
             </div>
           ))}
-        </div>
-        <div className="grid gap-3 text-sm md:grid-cols-2 xl:grid-cols-4">
-          <div className="depth-card p-3">
-            <div className="metric-label">Generation Model</div>
-            <div className="mt-2 break-words font-mono text-primary">{status?.generation_model ?? "unknown"}</div>
-          </div>
-          <div className="depth-card p-3">
-            <div className="metric-label">Rerank Model</div>
-            <div className="mt-2 break-words font-mono text-fuchsia-200">{status?.rerank_model ?? "unknown"}</div>
-          </div>
-          <div className="depth-card p-3">
-            <div className="metric-label">Evaluator Model</div>
-            <div className="mt-2 break-words font-mono text-amber-200">{status?.evaluator_model ?? "unknown"}</div>
-          </div>
-          <div className="depth-card p-3">
-            <div className="metric-label">Embedding Model</div>
-            <div className="mt-2 break-words font-mono text-sky-300">{status?.embedding_model ?? "unknown"}</div>
-          </div>
         </div>
       </CardContent>
     </Card>

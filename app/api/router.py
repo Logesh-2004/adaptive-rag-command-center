@@ -5,12 +5,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
 from app.core.config import get_settings, Settings
+from app.core.llm import describe_generation_error
 from app.core.logger import log_event
-from app.core.ollama import describe_local_model_error, is_ollama_running
 from app.ingestion.loader import ingest_documents
-from app.retrieval.vector_store import indexed_document_count, load_vector_store, vector_store_exists
+from app.retrieval.lexical_index import indexed_chunk_count, load_lexical_index, lexical_index_exists
 from app.generation.context import compress_context
-from app.retrieval.retriever import clear_retrieval_cache, corrective_retrieve, retrieve_adaptive, rerank_documents
+from app.retrieval.retriever import clear_retrieval_cache, corrective_retrieve, retrieve_adaptive
 from app.generation.answer import generate_answer, stream_answer
 from app.evaluation.evaluator import log_evaluation, evaluate_answer
 from app.improvement.optimizer import run_improvement_cycle
@@ -32,19 +32,13 @@ from app.api.schemas import (
 router = APIRouter(prefix="", tags=["adaptive-rag"])
 
 
-def _clean_model_http_error(exc: Exception, settings: Settings, event_type: str) -> HTTPException:
-    error = describe_local_model_error(exc)
-    log_event(settings, event_type, {"status": "error", "error_code": error.code, "message": error.message})
-    return HTTPException(status_code=error.status_code, detail=error.as_payload())
-
-
-def _load_vector_store_or_404(settings: Settings):
-    if not vector_store_exists(settings):
+def _load_lexical_index_or_404(settings: Settings):
+    if not lexical_index_exists(settings):
         raise HTTPException(
             status_code=404,
-            detail={"status": "error", "message": "Vector store not found. Run /ingest first."},
+            detail={"status": "error", "message": "BM25 index not found. Run /ingest first."},
         )
-    return load_vector_store(settings)
+    return load_lexical_index(settings)
 
 
 def _clean_output_text(text: str) -> str:
@@ -68,13 +62,9 @@ def _score_trace(documents):
     return [
         {
             "source": doc.metadata.get("source"),
-            "vector_score": doc.metadata.get("vector_score"),
-            "vector_norm": doc.metadata.get("vector_norm"),
-            "bm25_score": doc.metadata.get("keyword_score"),
-            "bm25_norm": doc.metadata.get("keyword_norm"),
-            "rerank_score": doc.metadata.get("rerank_score"),
-            "rerank_norm": doc.metadata.get("rerank_norm"),
-            "semantic_similarity": doc.metadata.get("semantic_similarity"),
+            "bm25_score": doc.metadata.get("bm25_score"),
+            "bm25_norm": doc.metadata.get("bm25_norm"),
+            "lexical_overlap": doc.metadata.get("lexical_overlap"),
             "metadata_boost": doc.metadata.get("metadata_boost"),
             "intent_boost": doc.metadata.get("intent_boost"),
             "quality_score": doc.metadata.get("quality_score"),
@@ -89,57 +79,41 @@ def _event(event_type: str, payload: dict) -> str:
     return json.dumps({"type": event_type, **payload}, ensure_ascii=False) + "\n"
 
 
-def _log_retrieval_debug(settings: Settings, query: str, initial_docs, reranked_docs) -> None:
+def _log_retrieval_debug(settings: Settings, query: str, initial_docs, ranked_docs) -> None:
     payload = {
         "query": query,
         "retrieved_context": _texts(initial_docs),
-        "reranked_chunks": [
+        "ranked_chunks": [
             {
                 "rank": index,
                 "relevance_score": doc.metadata.get("relevance_score"),
                 "source": doc.metadata.get("source"),
                 "content": doc.page_content,
             }
-            for index, doc in enumerate(reranked_docs, start=1)
+            for index, doc in enumerate(ranked_docs, start=1)
         ],
     }
     print("[RAG DEBUG] retrieval_to_generation", json.dumps(payload, ensure_ascii=False))
     log_event(settings, "retrieval_to_generation_debug", payload)
 
 
-def _log_raw_generation_response(settings: Settings, answer: str) -> None:
-    payload = {"raw_llm_response": answer}
-    print("[RAG DEBUG] raw_llm_response", json.dumps(payload, ensure_ascii=False))
-    log_event(settings, "generation_response_debug", payload)
-
-
 @router.get("/status", response_model=StatusResponse)
 def status() -> StatusResponse:
     settings = get_settings()
-    ollama_running = is_ollama_running(settings)
     return StatusResponse(
         status="running",
-        llm_provider="ollama",
-        generation_model=settings.generation_model,
-        evaluator_model=settings.evaluator_model,
-        rerank_model=settings.rerank_model,
-        vector_db_exists=vector_store_exists(settings),
-        indexed_documents=indexed_document_count(settings),
-        embedding_model=settings.embedding_model,
-        ollama_running=ollama_running,
+        generation_provider="Groq",
+        generation_provider_configured=settings.generation_provider_configured,
+        generation_model=settings.active_generation_model,
+        retrieval_strategy="BM25 lexical ranking",
+        lexical_index_exists=lexical_index_exists(settings),
+        indexed_chunks=indexed_chunk_count(settings),
     )
 
 
 @router.post("/ingest", response_model=IngestResponse)
 def ingest(settings: Settings = Depends(get_settings)) -> IngestResponse:
     start = perf_counter()
-    if not is_ollama_running(settings):
-        log_event(
-            settings,
-            "ingest_failure",
-            {"status": "error", "message": "Ollama server unavailable", "latency_ms": (perf_counter() - start) * 1000},
-        )
-        raise HTTPException(status_code=503, detail={"status": "error", "message": "Ollama server unavailable"})
     try:
         summary = ingest_documents(settings)
         clear_retrieval_cache()
@@ -152,6 +126,7 @@ def ingest(settings: Settings = Depends(get_settings)) -> IngestResponse:
                 "latency_ms": latency_ms,
                 "indexed_documents": summary["indexed_documents"],
                 "chunks_created": summary["chunks_created"],
+                "warnings": summary["warnings"],
             },
         )
         return IngestResponse(
@@ -159,15 +134,19 @@ def ingest(settings: Settings = Depends(get_settings)) -> IngestResponse:
             indexed_documents=summary["indexed_documents"],
             chunks_created=summary["chunks_created"],
             ingested_chunks=summary["chunks_created"],
-            message="Documents ingested and vector index updated.",
+            message=(
+                "Documents ingested and BM25 lexical index updated."
+                if not summary["warnings"]
+                else f"Documents ingested with {len(summary['warnings'])} unreadable file warning(s)."
+            ),
+            warnings=summary["warnings"],
         )
     except FileNotFoundError as exc:
         log_event(settings, "ingest_failure", {"status": "error", "message": str(exc)})
         raise HTTPException(status_code=404, detail={"status": "error", "message": str(exc)})
     except Exception as exc:
-        error = describe_local_model_error(exc)
-        log_event(settings, "ingest_failure", {"status": "error", "message": error.message, "error_code": error.code})
-        raise HTTPException(status_code=error.status_code, detail=error.as_payload())
+        log_event(settings, "ingest_failure", {"status": "error", "message": "Document ingestion failed."})
+        raise HTTPException(status_code=500, detail={"status": "error", "message": "Document ingestion failed."})
 
 
 @router.post("/query", response_model=QueryResponse)
@@ -178,53 +157,25 @@ def query(request: QueryRequest, settings: Settings = Depends(get_settings)) -> 
     evaluation = None
     initial_docs = []
     documents = []
-    if not is_ollama_running(settings):
-        warning = "Ollama server unavailable"
-        log_event(
-            settings,
-            "query",
-            {
-                "status": "warning",
-                "query": request.query,
-                "latency_ms": (perf_counter() - start) * 1000,
-                "num_retrieved": 0,
-                "num_reranked": 0,
-                "warning": warning,
-            },
-        )
-        return QueryResponse(
-            query=request.query,
-            answer="Local inference unavailable; start Ollama and ensure models are pulled.",
-            sources=[],
-            warning=warning,
-            evaluation=None,
-            timings=TimingMetrics(total_ms=(perf_counter() - start) * 1000),
-            grounding_score=0.0,
-            grounding=0.0,
-            grounded=False,
-            hallucination_risk="high",
-            relevance_scores=[],
-            rerank_model=settings.rerank_model,
-        )
     try:
         retrieval_start = perf_counter()
-        vector_store = _load_vector_store_or_404(settings)
-        initial_docs, documents, trace = retrieve_adaptive(request.query, vector_store, settings)
+        lexical_index = _load_lexical_index_or_404(settings)
+        initial_docs, documents, trace = retrieve_adaptive(request.query, lexical_index, settings)
         documents, compression = compress_context(documents)
         trace["context_compression"] = compression
-        timings.retrieval_ms = (perf_counter() - retrieval_start) * 1000
+        timings.retrieval_ms = float(trace.get("bm25_search_ms", (perf_counter() - retrieval_start) * 1000))
     except HTTPException:
         raise
     except Exception as exc:
-        error = describe_local_model_error(exc)
+        error_message = "Lexical retrieval failed."
         log_event(
             settings,
             "query_failure",
-            {"status": "error", "stage": "retrieve", "message": error.message, "error_code": error.code},
+            {"status": "error", "stage": "retrieve", "message": error_message},
         )
-        raise HTTPException(status_code=error.status_code, detail=error.as_payload())
+        raise HTTPException(status_code=500, detail={"status": "error", "message": error_message})
 
-    timings.rerank_ms = 0.0
+    timings.ranking_ms = float(trace.get("ranking_ms", 0.0))
 
     if not documents:
         warnings.append("No retrieved context available")
@@ -239,22 +190,41 @@ def query(request: QueryRequest, settings: Settings = Depends(get_settings)) -> 
         generated = True
     except Exception as exc:
         timings.generation_ms = (perf_counter() - generation_start) * 1000 if "generation_start" in locals() else 0.0
-        error = describe_local_model_error(exc)
+        error = describe_generation_error(exc, settings)
         warnings.append(error.message)
         log_event(
             settings,
-            "ollama_failure",
+            "generation_failure",
             {"stage": "generate_or_grounding", "error_code": error.code, "message": error.message},
         )
 
     if generated:
+        evaluation_start = perf_counter()
         try:
-            evaluation_start = perf_counter()
             evaluation = log_evaluation(request.query, documents, answer, settings)
             timings.evaluation_ms = (perf_counter() - evaluation_start) * 1000
-            if evaluation.get("hallucination_risk") == "high" or evaluation.get("retrieval_confidence", 1.0) < settings.retrieval_confidence_threshold:
-                retry_start = perf_counter()
-                retry_initial, retry_docs, trace = corrective_retrieve(request.query, vector_store, settings, trace)
+        except Exception as exc:
+            timings.evaluation_ms = (perf_counter() - evaluation_start) * 1000
+            warnings.append("Lexical evaluation unavailable")
+            log_event(
+                settings,
+                "evaluation_failure",
+                {
+                    "stage": "initial_evaluation",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:300],
+                },
+            )
+
+        if evaluation and (
+            evaluation.get("hallucination_risk") == "high"
+            or evaluation.get("retrieval_confidence", 1.0) < settings.retrieval_confidence_threshold
+        ):
+            retry_start = perf_counter()
+            try:
+                retry_initial, retry_docs, trace = corrective_retrieve(request.query, lexical_index, settings, trace)
+                timings.retrieval_ms = float(trace.get("bm25_search_ms", timings.retrieval_ms))
+                timings.ranking_ms = float(trace.get("ranking_ms", timings.ranking_ms))
                 retry_docs, retry_compression = compress_context(retry_docs)
                 retry_answer = generate_answer(request.query, retry_docs, settings)
                 retry_evaluation = log_evaluation(request.query, retry_docs, retry_answer, settings)
@@ -265,16 +235,19 @@ def query(request: QueryRequest, settings: Settings = Depends(get_settings)) -> 
                     evaluation = retry_evaluation
                     trace["context_compression"] = retry_compression
                     warnings.append("Corrective retrieval retry improved the answer")
+            except Exception as exc:
+                warnings.append("Corrective retry unavailable; kept the first answer")
+                log_event(
+                    settings,
+                    "corrective_retry_failure",
+                    {
+                        "stage": "corrective_retrieval_or_generation",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:300],
+                    },
+                )
+            finally:
                 timings.evaluation_ms += (perf_counter() - retry_start) * 1000
-        except Exception as exc:
-            timings.evaluation_ms = (perf_counter() - evaluation_start) * 1000 if "evaluation_start" in locals() else 0.0
-            error = describe_local_model_error(exc)
-            warnings.append("Evaluation unavailable")
-            log_event(
-                settings,
-                "evaluation_failure",
-                {"error_code": error.code, "message": error.message},
-            )
 
     latency_ms = (perf_counter() - start) * 1000
     timings.total_ms = latency_ms
@@ -288,7 +261,7 @@ def query(request: QueryRequest, settings: Settings = Depends(get_settings)) -> 
             "query": request.query,
             "latency_ms": latency_ms,
             "num_retrieved": len(initial_docs),
-            "num_reranked": len(documents),
+            "num_ranked": len(documents),
             "warning": "; ".join(dict.fromkeys(warnings)) if warnings else None,
             "evaluation": evaluation,
             "timings": timings.model_dump(),
@@ -296,7 +269,7 @@ def query(request: QueryRequest, settings: Settings = Depends(get_settings)) -> 
             "grounding": evaluation.get("grounding") if evaluation else None,
             "grounded": evaluation.get("grounded") if evaluation else None,
             "hallucination_risk": evaluation.get("hallucination_risk") if evaluation else None,
-            "rerank_model": settings.rerank_model,
+            "retrieval_strategy": "BM25 lexical ranking",
         },
     )
     return QueryResponse(
@@ -312,7 +285,7 @@ def query(request: QueryRequest, settings: Settings = Depends(get_settings)) -> 
         hallucination_risk=evaluation.get("hallucination_risk") if evaluation else None,
         relevance_scores=relevance_scores,
         retrieval_score_trace=_score_trace(documents),
-        rerank_model=settings.rerank_model,
+        retrieval_strategy="BM25 lexical ranking",
         trace=trace,
     )
 
@@ -327,38 +300,36 @@ def query_stream(request: QueryRequest, settings: Settings = Depends(get_setting
         documents = []
         answer_parts = []
 
-        if not is_ollama_running(settings):
-            yield _event("error", {"message": "Ollama server unavailable"})
-            return
-
         try:
             retrieval_start = perf_counter()
-            vector_store = _load_vector_store_or_404(settings)
-            initial_docs, documents, trace = retrieve_adaptive(request.query, vector_store, settings)
+            lexical_index = _load_lexical_index_or_404(settings)
+            initial_docs, documents, trace = retrieve_adaptive(request.query, lexical_index, settings)
             documents, compression = compress_context(documents)
             trace["context_compression"] = compression
-            timings.retrieval_ms = (perf_counter() - retrieval_start) * 1000
+            timings.retrieval_ms = float(trace.get("bm25_search_ms", (perf_counter() - retrieval_start) * 1000))
             yield _event("retrieval", {"timings": timings.model_dump(), "sources": _texts(initial_docs)})
 
-            rerank_start = perf_counter()
-            timings.rerank_ms = (perf_counter() - rerank_start) * 1000
+            timings.ranking_ms = float(trace.get("ranking_ms", 0.0))
             _log_retrieval_debug(settings, request.query, initial_docs, documents)
             if not documents:
                 warnings.append("No retrieved context available")
             yield _event(
-                "rerank",
+                "rank",
                 {
                     "timings": timings.model_dump(),
                     "sources": _texts(documents),
                     "relevance_scores": _scores(documents),
                     "retrieval_score_trace": _score_trace(documents),
-                    "rerank_model": settings.rerank_model,
+                    "retrieval_strategy": "BM25 lexical ranking",
                     "trace": trace,
                 },
             )
-        except Exception as exc:
-            error = describe_local_model_error(exc)
-            yield _event("error", {"message": error.message, "error_code": error.code})
+        except HTTPException as exc:
+            detail = exc.detail if isinstance(exc.detail, dict) else {"message": str(exc.detail)}
+            yield _event("error", {"message": detail.get("message", "Lexical retrieval failed."), "error_code": "retrieval_failed"})
+            return
+        except Exception:
+            yield _event("error", {"message": "Lexical retrieval failed.", "error_code": "retrieval_failed"})
             return
 
         try:
@@ -368,20 +339,52 @@ def query_stream(request: QueryRequest, settings: Settings = Depends(get_setting
                 timings.generation_ms = (perf_counter() - generation_start) * 1000
                 yield _event("token", {"token": token, "timings": timings.model_dump()})
             answer = "".join(answer_parts).strip()
-            _log_raw_generation_response(settings, answer)
+            if not answer:
+                # Some compatible gateways can finish a stream without a content delta.
+                # Retry once without streaming so the UI receives either an answer or a
+                # useful generation error instead of an empty successful response.
+                answer = generate_answer(request.query, documents, settings)
+                answer_parts.append(answer)
+                timings.generation_ms = (perf_counter() - generation_start) * 1000
+                yield _event("token", {"token": answer, "timings": timings.model_dump()})
             timings.generation_ms = (perf_counter() - generation_start) * 1000
         except Exception as exc:
-            error = describe_local_model_error(exc)
+            error = describe_generation_error(exc, settings)
+            log_event(
+                settings,
+                "generation_failure",
+                {"stage": "stream_generate", "error_code": error.code, "message": error.message},
+            )
             yield _event("error", {"message": error.message, "error_code": error.code})
             return
 
         evaluation = None
+        evaluation_start = perf_counter()
         try:
-            evaluation_start = perf_counter()
             evaluation = log_evaluation(request.query, documents, answer, settings)
             timings.evaluation_ms = (perf_counter() - evaluation_start) * 1000
-            if evaluation.get("hallucination_risk") == "high" or evaluation.get("retrieval_confidence", 1.0) < settings.retrieval_confidence_threshold:
-                retry_initial, retry_docs, trace = corrective_retrieve(request.query, vector_store, settings, trace)
+        except Exception as exc:
+            timings.evaluation_ms = (perf_counter() - evaluation_start) * 1000
+            warnings.append("Lexical evaluation unavailable")
+            log_event(
+                settings,
+                "evaluation_failure",
+                {
+                    "stage": "initial_evaluation_stream",
+                    "error_type": type(exc).__name__,
+                    "error": str(exc)[:300],
+                },
+            )
+
+        if evaluation and (
+            evaluation.get("hallucination_risk") == "high"
+            or evaluation.get("retrieval_confidence", 1.0) < settings.retrieval_confidence_threshold
+        ):
+            retry_start = perf_counter()
+            try:
+                retry_initial, retry_docs, trace = corrective_retrieve(request.query, lexical_index, settings, trace)
+                timings.retrieval_ms = float(trace.get("bm25_search_ms", timings.retrieval_ms))
+                timings.ranking_ms = float(trace.get("ranking_ms", timings.ranking_ms))
                 retry_docs, retry_compression = compress_context(retry_docs)
                 retry_answer = generate_answer(request.query, retry_docs, settings)
                 retry_evaluation = log_evaluation(request.query, retry_docs, retry_answer, settings)
@@ -392,8 +395,19 @@ def query_stream(request: QueryRequest, settings: Settings = Depends(get_setting
                     evaluation = retry_evaluation
                     trace["context_compression"] = retry_compression
                     warnings.append("Corrective retrieval retry improved the answer")
-        except Exception as exc:
-            warnings.append(f"Evaluation unavailable: {describe_local_model_error(exc).message}")
+            except Exception as exc:
+                warnings.append("Corrective retry unavailable; kept the first answer")
+                log_event(
+                    settings,
+                    "corrective_retry_failure",
+                    {
+                        "stage": "corrective_retrieval_or_generation_stream",
+                        "error_type": type(exc).__name__,
+                        "error": str(exc)[:300],
+                    },
+                )
+            finally:
+                timings.evaluation_ms += (perf_counter() - retry_start) * 1000
 
         timings.total_ms = (perf_counter() - start) * 1000
         response = QueryResponse(
@@ -409,7 +423,7 @@ def query_stream(request: QueryRequest, settings: Settings = Depends(get_setting
             hallucination_risk=evaluation.get("hallucination_risk") if evaluation else None,
             relevance_scores=_scores(documents),
             retrieval_score_trace=_score_trace(documents),
-            rerank_model=settings.rerank_model,
+            retrieval_strategy="BM25 lexical ranking",
             trace=trace,
         )
         log_event(
@@ -420,7 +434,8 @@ def query_stream(request: QueryRequest, settings: Settings = Depends(get_setting
                 "query": request.query,
                 "latency_ms": timings.total_ms,
                 "num_retrieved": len(initial_docs),
-                "num_reranked": len(documents),
+                "num_ranked": len(documents),
+                "warning": "; ".join(dict.fromkeys(warnings)) if warnings else None,
                 "evaluation": evaluation,
                 "timings": timings.model_dump(),
             },
@@ -454,15 +469,14 @@ def evaluate(request: EvaluationRequest, settings: Settings = Depends(get_settin
         )
         return EvaluationResponse(status="success", **evaluation)
     except Exception as exc:
-        error = describe_local_model_error(exc)
         log_event(
             settings,
             "evaluation_failure",
             {
                 "status": "warning",
                 "latency_ms": (perf_counter() - start) * 1000,
-                "error_code": error.code,
-                "message": error.message,
+                "error_code": "evaluation_failed",
+                "message": "Lexical evaluation failed.",
             },
         )
         return EvaluationResponse(status="warning", message="Evaluation unavailable")
@@ -492,40 +506,15 @@ def debug_retrieval_endpoint(request: RetrievalDebugRequest, settings: Settings 
     start = perf_counter()
     timings = TimingMetrics()
     warning = None
-    if not is_ollama_running(settings):
-        warning = "Ollama server unavailable"
-        log_event(
-            settings,
-            "debug_retrieval",
-            {
-                "query": request.query,
-                "status": "warning",
-                "latency_ms": (perf_counter() - start) * 1000,
-                "retrieved_document_count": 0,
-                "reranked_document_count": 0,
-                "warning": warning,
-            },
-        )
-        timings.total_ms = (perf_counter() - start) * 1000
-        return RetrievalDebugResponse(
-            query=request.query,
-            initial_documents=[],
-            reranked_documents=[],
-            relevance_scores=[],
-            retrieval_score_trace=[],
-            rerank_model=settings.rerank_model,
-            timings=timings,
-            warning=warning,
-        )
     try:
         retrieval_start = perf_counter()
-        vector_store = _load_vector_store_or_404(settings)
-        initial_docs, reranked_docs, trace = retrieve_adaptive(request.query, vector_store, settings)
-        timings.retrieval_ms = (perf_counter() - retrieval_start) * 1000
-        timings.rerank_ms = 0.0
+        lexical_index = _load_lexical_index_or_404(settings)
+        initial_docs, ranked_docs, trace = retrieve_adaptive(request.query, lexical_index, settings)
+        timings.retrieval_ms = float(trace.get("bm25_search_ms", (perf_counter() - retrieval_start) * 1000))
+        timings.ranking_ms = float(trace.get("ranking_ms", 0.0))
         initial_texts = _texts(initial_docs)
-        reranked_texts = _texts(reranked_docs)
-        relevance_scores = _scores(reranked_docs)
+        ranked_texts = _texts(ranked_docs)
+        relevance_scores = _scores(ranked_docs)
         timings.total_ms = (perf_counter() - start) * 1000
         log_event(
             settings,
@@ -535,7 +524,7 @@ def debug_retrieval_endpoint(request: RetrievalDebugRequest, settings: Settings 
                 "status": "warning" if warning else "success",
                 "latency_ms": (perf_counter() - start) * 1000,
                 "retrieved_document_count": len(initial_texts),
-                "reranked_document_count": len(reranked_texts),
+                "ranked_document_count": len(ranked_texts),
                 "timings": timings.model_dump(),
                 "warning": warning,
             },
@@ -543,10 +532,10 @@ def debug_retrieval_endpoint(request: RetrievalDebugRequest, settings: Settings 
         return RetrievalDebugResponse(
             query=request.query,
             initial_documents=initial_texts,
-            reranked_documents=reranked_texts,
+            ranked_documents=ranked_texts,
            relevance_scores=relevance_scores,
-            retrieval_score_trace=_score_trace(reranked_docs),
-            rerank_model=settings.rerank_model,
+            retrieval_score_trace=_score_trace(ranked_docs),
+            retrieval_strategy="BM25 lexical ranking",
             trace=trace,
             timings=timings,
             warning=warning,
@@ -554,9 +543,6 @@ def debug_retrieval_endpoint(request: RetrievalDebugRequest, settings: Settings 
     except HTTPException:
         raise
     except Exception as exc:
-        error = describe_local_model_error(exc)
-        if error.code != "local_inference_failed":
-            raise _clean_model_http_error(exc, settings, "ollama_failure")
         log_event(settings, "debug_retrieval_failure", {"status": "error", "message": "Debug retrieval failed"})
         raise HTTPException(status_code=500, detail={"status": "error", "message": "Debug retrieval failed"})
 

@@ -8,6 +8,7 @@ class IngestResponse(BaseModel):
     chunks_created: int
     ingested_chunks: int
     message: Optional[str] = None
+    warnings: List[str] = Field(default_factory=list)
 
 
 class QueryRequest(BaseModel):
@@ -16,7 +17,7 @@ class QueryRequest(BaseModel):
 
 class TimingMetrics(BaseModel):
     retrieval_ms: float = 0.0
-    rerank_ms: float = 0.0
+    ranking_ms: float = 0.0
     generation_ms: float = 0.0
     evaluation_ms: float = 0.0
     total_ms: float = 0.0
@@ -35,7 +36,7 @@ class QueryResponse(BaseModel):
     hallucination_risk: Optional[str] = None
     relevance_scores: List[float] = Field(default_factory=list)
     retrieval_score_trace: List[dict] = Field(default_factory=list)
-    rerank_model: Optional[str] = None
+    retrieval_strategy: Optional[str] = None
     trace: Optional[dict] = None
 
 
@@ -58,7 +59,7 @@ class EvaluationResponse(BaseModel):
     context_precision: Optional[float] = None
     context_recall: Optional[float] = None
     hallucination_score: Optional[float] = None
-    semantic_grounding_score: Optional[float] = None
+    lexical_grounding_score: Optional[float] = None
     retrieval_diversity_score: Optional[float] = None
     unsupported_sentences: List[str] = Field(default_factory=list)
     repair_recommended: Optional[bool] = None
@@ -79,10 +80,10 @@ class RetrievalDebugRequest(BaseModel):
 class RetrievalDebugResponse(BaseModel):
     query: str
     initial_documents: List[str]
-    reranked_documents: List[str]
+    ranked_documents: List[str]
     relevance_scores: List[float] = Field(default_factory=list)
     retrieval_score_trace: List[dict] = Field(default_factory=list)
-    rerank_model: Optional[str] = None
+    retrieval_strategy: Optional[str] = None
     trace: Optional[dict] = None
     timings: TimingMetrics = Field(default_factory=TimingMetrics)
     warning: Optional[str] = None
@@ -97,11 +98,9 @@ class FeedbackRequest(BaseModel):
 
 class StatusResponse(BaseModel):
     status: str
-    llm_provider: str
+    generation_provider: str
+    generation_provider_configured: bool
     generation_model: str
-    evaluator_model: str
-    rerank_model: str
-    vector_db_exists: bool
-    indexed_documents: int
-    embedding_model: str
-    ollama_running: bool
+    retrieval_strategy: str
+    lexical_index_exists: bool
+    indexed_chunks: int

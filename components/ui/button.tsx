@@ -4,20 +4,20 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
-  "inline-flex h-10 items-center justify-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 active:translate-y-px",
+  "button-3d inline-flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-45 active:brightness-90",
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground shadow-[0_0_28px_rgba(45,212,191,0.22)] hover:bg-primary/90 hover:shadow-[0_0_36px_rgba(45,212,191,0.35)]",
-        secondary: "border border-white/10 bg-white/[0.08] text-secondary-foreground hover:border-primary/30 hover:bg-white/[0.13]",
-        ghost: "hover:bg-white/10 hover:text-primary",
-        outline: "border border-white/15 bg-white/[0.04] hover:border-primary/30 hover:bg-white/[0.1] hover:shadow-[0_0_26px_rgba(45,212,191,0.1)]",
+        default: "button-primary bg-primary text-primary-foreground shadow-[0_12px_28px_rgba(91,100,220,0.22),inset_0_1px_0_rgba(255,255,255,0.24)] hover:bg-primary/90",
+        secondary: "button-glass border border-white/10 bg-white/[0.065] text-secondary-foreground hover:border-primary/30 hover:bg-white/[0.1]",
+        ghost: "button-ghost text-muted-foreground hover:bg-white/[0.06] hover:text-foreground",
+        outline: "button-outline border border-white/[0.14] bg-white/[0.025] text-foreground hover:border-primary/35 hover:bg-white/[0.07]",
         destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
       },
       size: {
         default: "h-10 px-4",
-        sm: "h-8 px-3 text-xs",
-        icon: "h-10 w-10 px-0",
+        sm: "h-11 px-3 text-xs",
+        icon: "h-11 w-11 px-0",
       },
     },
     defaultVariants: {

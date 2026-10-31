@@ -10,7 +10,7 @@ const API_BASE = "/rag-api";
 
 export type StreamEvent =
   | { type: "retrieval"; timings?: QueryResponse["timings"]; sources?: string[] }
-  | { type: "rerank"; timings?: QueryResponse["timings"]; sources?: string[]; relevance_scores?: number[]; retrieval_score_trace?: QueryResponse["retrieval_score_trace"]; rerank_model?: string; trace?: QueryResponse["trace"] }
+  | { type: "rank"; timings?: QueryResponse["timings"]; sources?: string[]; relevance_scores?: number[]; retrieval_score_trace?: QueryResponse["retrieval_score_trace"]; retrieval_strategy?: string; trace?: QueryResponse["trace"] }
   | { type: "token"; token: string; timings?: QueryResponse["timings"] }
   | ({ type: "done" } & QueryResponse)
   | { type: "error"; message: string; error_code?: string; timings?: QueryResponse["timings"] };

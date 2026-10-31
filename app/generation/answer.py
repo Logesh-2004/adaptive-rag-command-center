@@ -1,106 +1,115 @@
 import json
 from typing import Iterator, List
-from urllib.request import Request, urlopen
+
+import requests
+from langchain_core.documents import Document
 
 from app.core.config import Settings
 from app.core.logger import log_event
 from app.generation.context import compress_context
-from langchain_core.documents import Document
 
 
 FALLBACK_ANSWER = "Insufficient information based on retrieved data"
 
 
 def generate_answer(query: str, documents: List[Document], settings: Settings) -> str:
-    """Generate an answer from the query and retrieved document context."""
-    prompt = build_generation_prompt(query, documents)
-    if prompt is None:
+    """Generate an answer with Groq's OpenAI-compatible chat completions API."""
+    messages = build_generation_messages(query, documents)
+    if messages is None:
         return FALLBACK_ANSWER
-
-    _debug_generation(settings, query, documents, prompt)
-    payload = {
-        "model": settings.generation_model,
-        "prompt": prompt,
-        "stream": False,
-        "keep_alive": "30m",
-        "options": {
-            "temperature": 0.05,
-            "num_predict": settings.generation_num_predict,
-        },
-    }
-    request = Request(
-        settings.ollama_base_url.rstrip("/") + "/api/generate",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urlopen(request, timeout=120) as response:
-        content = json.loads(response.read().decode("utf-8"))
-    answer = str(content.get("response", "")).strip()
+    _debug_generation(settings, query, documents, messages)
+    response = requests.post(_completion_url(settings), headers=_headers(settings), json=_request_body(settings, messages), timeout=(10, 90))
+    response.raise_for_status()
+    payload = response.json()
+    answer = (payload["choices"][0]["message"].get("content") or "").strip()
+    if not answer:
+        raise RuntimeError("Groq returned an empty answer")
     _debug_raw_response(settings, answer)
     return answer
 
 
 def stream_answer(query: str, documents: List[Document], settings: Settings) -> Iterator[str]:
-    """Stream generated answer tokens from the local generation model."""
-    prompt = build_generation_prompt(query, documents)
-    if prompt is None:
+    """Stream answer text from Groq's chat completions endpoint."""
+    messages = build_generation_messages(query, documents)
+    if messages is None:
         yield FALLBACK_ANSWER
         return
-
-    _debug_generation(settings, query, documents, prompt)
-    payload = {
-        "model": settings.generation_model,
-        "prompt": prompt,
-        "stream": True,
-        "keep_alive": "30m",
-        "options": {
-            "temperature": 0.05,
-            "num_predict": settings.generation_num_predict,
-        },
-    }
-    request = Request(
-        settings.ollama_base_url.rstrip("/") + "/api/generate",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urlopen(request, timeout=120) as response:
-        for raw_line in response:
-            if not raw_line.strip():
+    _debug_generation(settings, query, documents, messages)
+    body = _request_body(settings, messages)
+    body["stream"] = True
+    answer_parts: list[str] = []
+    with requests.post(
+        _completion_url(settings),
+        headers=_headers(settings),
+        json=body,
+        timeout=(10, 120),
+        stream=True,
+    ) as response:
+        response.raise_for_status()
+        for line in response.iter_lines(decode_unicode=True):
+            if not line:
                 continue
-            event = json.loads(raw_line.decode("utf-8"))
-            token = event.get("response", "")
+            if isinstance(line, bytes):
+                line = line.decode("utf-8", errors="ignore")
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                break
+            event = json.loads(data)
+            if event.get("error"):
+                raise RuntimeError("Groq returned an error while streaming the answer")
+            choices = event.get("choices") or []
+            if not choices:
+                continue
+            token = choices[0].get("delta", {}).get("content") or ""
             if token:
-                yield str(token)
+                answer_parts.append(token)
+                yield token
+    streamed_answer = "".join(answer_parts).strip()
+    if streamed_answer:
+        _debug_raw_response(settings, streamed_answer)
 
 
-def build_generation_prompt(query: str, documents: List[Document]) -> str | None:
+def _completion_url(settings: Settings) -> str:
+    return f"{settings.groq_api_base.rstrip('/')}/chat/completions"
+
+
+def _headers(settings: Settings) -> dict[str, str]:
+    api_key = settings.groq_api_key_value
+    if not api_key:
+        raise ValueError("GROQ_API_KEY is required for generation")
+    return {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+
+
+def _request_body(settings: Settings, messages: list[dict[str, str]]) -> dict:
+    body = {
+        "model": settings.groq_model,
+        "messages": messages,
+        "temperature": settings.llm_temperature,
+        "max_completion_tokens": settings.generation_num_predict,
+        "include_reasoning": False,
+    }
+    if settings.groq_model.startswith("openai/gpt-oss-"):
+        body["reasoning_effort"] = "low"
+    return body
+
+
+def build_generation_messages(query: str, documents: List[Document]) -> list[dict[str, str]] | None:
     if not documents:
         return None
-
     compressed_documents, _metrics = compress_context(documents)
     context = build_context(compressed_documents)
     if not context:
         return None
-
-    return f"""
-You are a helpful AI assistant.
-
-Answer ONLY using the provided context.
-
-Context:
-{context}
-
-Question:
-{query}
-
-Answer:
-""".strip()
+    return [
+        {"role": "system", "content": "You are a helpful assistant. Answer only from the supplied context. If the context does not contain enough information, say so clearly. Do not invent facts."},
+        {"role": "user", "content": f"Context:\n{context}\n\nQuestion:\n{query}\n\nAnswer:"},
+    ]
 
 
 def build_context(documents: List[Document]) -> str:
-    """Concatenate top reranked chunks while preserving readable chunk formatting."""
+    """Concatenate top ranked chunks while preserving readable boundaries."""
     blocks = []
     for index, doc in enumerate(documents, start=1):
         content = doc.page_content.strip()
@@ -109,12 +118,15 @@ def build_context(documents: List[Document]) -> str:
     return "\n\n".join(blocks).strip()
 
 
-def _debug_generation(settings: Settings, query: str, documents: List[Document], prompt: str) -> None:
+def _debug_generation(settings: Settings, query: str, documents: List[Document], messages: list[dict[str, str]]) -> None:
     context = build_context(documents)
+    prompt = "\n\n".join(message["content"] for message in messages)
     payload = {
+        "provider": "groq",
+        "model": settings.groq_model,
         "query": query,
         "retrieved_context": context,
-        "reranked_chunks": [
+        "ranked_chunks": [
             {
                 "rank": index,
                 "relevance_score": doc.metadata.get("relevance_score"),
@@ -131,6 +143,6 @@ def _debug_generation(settings: Settings, query: str, documents: List[Document],
 
 
 def _debug_raw_response(settings: Settings, answer: str) -> None:
-    payload = {"raw_llm_response": answer}
+    payload = {"provider": "groq", "raw_llm_response": answer}
     print("[RAG DEBUG] raw_llm_response", json.dumps(payload, ensure_ascii=False))
     log_event(settings, "generation_response_debug", payload)

@@ -7,12 +7,12 @@ class QueryPlan:
     query_type: str
     complexity: float
     top_k: int
-    rerank_top_n: int
+    retrieval_top_n: int
     multi_hop: bool
     rewritten_queries: list[str]
 
 
-def classify_query(query: str, base_top_k: int, base_rerank_top_n: int) -> QueryPlan:
+def classify_query(query: str, base_top_k: int, base_retrieval_top_n: int) -> QueryPlan:
     """Classify query intent with deterministic routing rules."""
     text = query.lower().strip()
     words = re.findall(r"[a-zA-Z0-9_-]+", text)
@@ -34,20 +34,20 @@ def classify_query(query: str, base_top_k: int, base_rerank_top_n: int) -> Query
 
     complexity = min(1.0, (len(words) / 18.0) + (0.25 if asks_why_how else 0.0) + (0.25 if multi_hop else 0.0))
     top_k = base_top_k
-    rerank_top_n = base_rerank_top_n
+    retrieval_top_n = base_retrieval_top_n
     if query_type in {"reasoning", "summarization"}:
         top_k = max(base_top_k, 6)
-        rerank_top_n = max(base_rerank_top_n, 3)
+        retrieval_top_n = max(base_retrieval_top_n, 3)
     if query_type in {"comparison", "agentic_multi_hop"}:
         top_k = max(base_top_k, 8)
-        rerank_top_n = max(base_rerank_top_n, 4)
+        retrieval_top_n = max(base_retrieval_top_n, 4)
 
     rewritten_queries = expand_query(query)
-    return QueryPlan(query_type, round(complexity, 3), top_k, rerank_top_n, multi_hop, rewritten_queries)
+    return QueryPlan(query_type, round(complexity, 3), top_k, retrieval_top_n, multi_hop, rewritten_queries)
 
 
 def expand_query(query: str) -> list[str]:
-    """Generate lightweight semantic rewrites for retrieval, not generation."""
+    """Expand queries with deterministic lexical terms for retrieval."""
     rewrites = [query]
     lower = query.lower()
     if "adaptive rag" in lower:

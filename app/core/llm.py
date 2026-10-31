@@ -1,40 +1,32 @@
-from typing import Optional
-
-from langchain_ollama import ChatOllama
+from dataclasses import dataclass
 
 from app.core.config import Settings
 
-_MODEL_CACHE: dict[tuple[str, str, float, int], ChatOllama] = {}
+
+@dataclass(frozen=True)
+class GenerationErrorInfo:
+    status_code: int
+    status: str
+    message: str
+    code: str
+
+    def as_payload(self) -> dict[str, str]:
+        return {"status": self.status, "message": self.message, "error_code": self.code}
 
 
-def _get_model(settings: Settings, model: str, temperature: float, num_predict: int) -> ChatOllama:
-    key = (settings.ollama_base_url, model, temperature, num_predict)
-    if key not in _MODEL_CACHE:
-        _MODEL_CACHE[key] = ChatOllama(
-            model=model,
-        temperature=temperature,
-        base_url=settings.ollama_base_url,
-        num_predict=num_predict,
-        keep_alive="30m",
-    )
-    return _MODEL_CACHE[key]
+def describe_generation_error(exc: Exception, settings: Settings) -> GenerationErrorInfo:
+    """Convert Groq failures into safe, user-facing API errors."""
+    if not settings.groq_key_configured:
+        return GenerationErrorInfo(503, "error", "Add GROQ_API_KEY to the backend environment to use Groq.", "groq_api_key_missing")
 
-
-def get_generation_model(settings: Settings, temperature: Optional[float] = None) -> ChatOllama:
-    """Return the cached llama3 client used only for final answer generation."""
-    return _get_model(
-        settings,
-        settings.generation_model,
-        settings.llm_temperature if temperature is None else temperature,
-        settings.generation_num_predict,
-    )
-
-
-def get_evaluator_model(settings: Settings, temperature: float = 0.0) -> ChatOllama:
-    """Return the cached phi3:mini client used for reranking and evaluation."""
-    return _get_model(settings, settings.evaluator_model, temperature, settings.evaluator_num_predict)
-
-
-def get_chat_model(settings: Settings, temperature: Optional[float] = None) -> ChatOllama:
-    """Backward-compatible generation model accessor."""
-    return get_generation_model(settings, temperature)
+    response = getattr(exc, "response", None)
+    status_code = getattr(exc, "status_code", None) or getattr(response, "status_code", None)
+    if status_code == 429:
+        return GenerationErrorInfo(429, "error", "Groq rate limit reached. Please try again later.", "groq_rate_limited")
+    if status_code in (401, 403):
+        return GenerationErrorInfo(503, "error", "Groq rejected the API key or model access. Check GROQ_API_KEY and GROQ_MODEL.", "groq_auth_error")
+    if status_code == 400:
+        return GenerationErrorInfo(502, "error", "Groq rejected the request. Check GROQ_MODEL and the generation settings.", "groq_request_error")
+    if isinstance(status_code, int) and status_code >= 500:
+        return GenerationErrorInfo(503, "error", "Groq is temporarily unavailable. Please try again shortly.", "groq_unavailable")
+    return GenerationErrorInfo(502, "error", "Groq generation failed. Check the provider configuration and try again.", "groq_generation_failed")

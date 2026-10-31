@@ -65,7 +65,7 @@ def run_improvement_cycle(settings: Settings) -> Tuple[str, int, List[str]]:
         elif weak_reasons.get("relevance", 0) > weak_reasons.get("faithfulness", 0):
             suggestions.append(f"Change chunk size from {settings.chunk_size} to {max(100, settings.chunk_size - 100)}.")
             suggestions.append(f"Change retrieval k from {settings.retrieval_top_k} to {settings.retrieval_top_k + 1}.")
-            suggestions.append("Consider refining the embedding model or document filtering.")
+            suggestions.append("Review BM25 keyword coverage, document filtering, and source quality.")
         else:
             suggestions.append(f"Change retrieval k from {settings.retrieval_top_k} to {settings.retrieval_top_k + 1}.")
             suggestions.append(f"Change chunk size from {settings.chunk_size} to {max(100, settings.chunk_size - 100)}.")

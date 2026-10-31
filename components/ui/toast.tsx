@@ -32,7 +32,7 @@ export function ToastProvider({
             if (!open) onDismiss(message.id);
           }}
           className={cn(
-            "glass-panel grid w-[360px] gap-1 rounded-lg p-4 shadow-lg data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-80 data-[state=open]:slide-in-from-right-full",
+            "glass-panel grid w-[min(360px,calc(100vw-2rem))] gap-1 p-4 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-80 data-[state=open]:slide-in-from-right-full",
             message.variant === "destructive" && "border-destructive/40",
           )}
         >
@@ -45,13 +45,13 @@ export function ToastProvider({
                 </ToastPrimitives.Description>
               ) : null}
             </div>
-            <ToastPrimitives.Close className="rounded-md p-1 text-muted-foreground hover:bg-white/10 hover:text-foreground">
-              <X className="h-4 w-4" />
+            <ToastPrimitives.Close aria-label="Dismiss notification" className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-white/[0.08] hover:text-foreground">
+              <X aria-hidden="true" className="h-4 w-4" />
             </ToastPrimitives.Close>
           </div>
         </ToastPrimitives.Root>
       ))}
-      <ToastPrimitives.Viewport className="fixed right-4 top-4 z-50 flex max-h-screen w-[390px] flex-col gap-2 outline-none" />
+      <ToastPrimitives.Viewport className="fixed right-4 top-4 z-50 flex max-h-[calc(100dvh-2rem)] w-[min(390px,calc(100vw-2rem))] flex-col gap-2 outline-none" />
     </ToastPrimitives.Provider>
   );
 }

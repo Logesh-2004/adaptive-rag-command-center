@@ -1,4 +1,4 @@
-import { AlertCircle, CheckCircle2, History, Info, TriangleAlert } from "lucide-react";
+import { AlertCircle, CheckCircle2, Info, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ActivityEvent } from "@/types/api";
@@ -13,14 +13,12 @@ const icons = {
 export function LogsViewer({ events }: { events: ActivityEvent[] }) {
   return (
     <Card id="logs">
-      <CardHeader>
-        <div className="flex items-center justify-between gap-3">
-          <CardTitle className="flex items-center gap-2">
-            <History className="h-4 w-4 text-primary" />
-            Logs Viewer
-          </CardTitle>
-          <Badge>{events.length} recent</Badge>
+      <CardHeader className="flex flex-row items-center justify-between gap-4 pb-4 space-y-0">
+        <div>
+          <p className="section-kicker">Session history</p>
+          <CardTitle className="mt-1">Recent activity</CardTitle>
         </div>
+        <Badge>{events.length} events</Badge>
       </CardHeader>
       <CardContent>
         <div className="space-y-3">
@@ -28,28 +26,29 @@ export function LogsViewer({ events }: { events: ActivityEvent[] }) {
             events.map((event) => {
               const Icon = icons[event.severity];
               return (
-                <div key={event.id} className="rounded-lg border border-white/10 bg-black/20 p-3">
+                <div key={event.id} className="activity-row depth-card p-4">
                   <div className="flex items-start gap-3">
                     <Icon
+                      aria-hidden="true"
                       className={
                         event.severity === "error"
                           ? "mt-0.5 h-4 w-4 text-destructive"
                           : event.severity === "warning"
-                            ? "mt-0.5 h-4 w-4 text-amber-300"
+                            ? "mt-0.5 h-4 w-4 text-warning"
                             : event.severity === "success"
-                              ? "mt-0.5 h-4 w-4 text-primary"
-                              : "mt-0.5 h-4 w-4 text-sky-300"
+                              ? "mt-0.5 h-4 w-4 text-success"
+                              : "mt-0.5 h-4 w-4 text-accent"
                       }
                     />
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center justify-between gap-2">
                         <div className="flex flex-wrap items-center gap-2">
-                          <h4 className="text-sm font-medium">{event.title}</h4>
-                          <Badge>{event.type}</Badge>
+                          <h3 className="text-sm font-medium">{event.title}</h3>
+                          <Badge className="capitalize">{event.type}</Badge>
                         </div>
-                        <span className="font-mono text-xs text-muted-foreground">{event.time}</span>
+                        <time className="font-mono text-xs tabular-nums text-muted-foreground">{event.time}</time>
                       </div>
-                      <p className="mt-1 text-sm leading-6 text-muted-foreground">{event.detail}</p>
+                      <p className="mt-1 break-words text-sm leading-6 text-muted-foreground">{event.detail}</p>
                     </div>
                   </div>
                 </div>

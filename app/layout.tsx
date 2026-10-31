@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Adaptive RAG Command Center",
-  description: "AI observability dashboard for retrieval, generation, and evaluation workflows.",
+  title: "Adaptive RAG | Knowledge workspace",
+  description: "Query a local knowledge base, trace retrieved passages, and inspect answer grounding.",
 };
 
 export default function RootLayout({
