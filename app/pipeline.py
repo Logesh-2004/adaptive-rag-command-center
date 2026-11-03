@@ -19,7 +19,7 @@ from app.core.logger import log_debug_event, log_event
 from app.evaluation.evaluator import log_evaluation
 from app.generation.answer import generate_answer, stream_answer
 from app.generation.context import compress_context
-from app.retrieval.lexical_index import lexical_index_exists, load_lexical_index
+from app.retrieval.lexical_index import index_building, lexical_index_exists, load_lexical_index
 from app.retrieval.retriever import corrective_retrieve, retrieve_adaptive
 
 RETRIEVAL_STRATEGY = "BM25 lexical ranking"
@@ -39,6 +39,8 @@ class PipelineError(Exception):
 
 def load_index_or_raise(settings: Settings):
     if not lexical_index_exists(settings):
+        if index_building():
+            raise PipelineError(503, "The knowledge base is warming up. Try again in about 30 seconds.", "index_building")
         raise PipelineError(404, "BM25 index not found. Run /ingest first.", "index_missing")
     return load_lexical_index(settings)
 

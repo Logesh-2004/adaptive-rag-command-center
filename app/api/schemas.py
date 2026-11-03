@@ -107,3 +107,4 @@ class StatusResponse(BaseModel):
     lexical_index_exists: bool
     indexed_chunks: int
     admin_required: bool = False
+    index_building: bool = False

@@ -8,6 +8,8 @@ export type StatusResponse = {
   indexed_chunks: number;
   /** True when this deployment needs an admin token to rebuild the index. */
   admin_required?: boolean;
+  /** True while the backend rebuilds its search index after a restart. */
+  index_building?: boolean;
 };
 
 export type QueryResponse = {

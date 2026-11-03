@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse
 from app.core.config import get_settings, Settings
 from app.core.logger import log_event
 from app.ingestion.loader import ingest_documents
-from app.retrieval.lexical_index import indexed_chunk_count, lexical_index_exists
+from app.retrieval.lexical_index import index_building, indexed_chunk_count, lexical_index_exists
 from app.retrieval.retriever import clear_retrieval_cache, retrieve_adaptive
 from app.evaluation.evaluator import evaluate_answer
 from app.improvement.optimizer import run_improvement_cycle
@@ -55,6 +55,7 @@ def status(settings: Settings = Depends(get_settings)) -> StatusResponse:
         lexical_index_exists=lexical_index_exists(settings),
         indexed_chunks=indexed_chunk_count(settings),
         admin_required=settings.admin_token_value is not None,
+        index_building=index_building(),
     )
 
 

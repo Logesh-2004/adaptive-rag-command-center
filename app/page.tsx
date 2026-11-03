@@ -77,6 +77,9 @@ export default function RelayPage() {
   const [response, setResponse] = useState<QueryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<StatusResponse | null>(null);
+  const [statusError, setStatusError] = useState(false);
+  // Only mention warming up if the first status check is slow, so a quick load never flashes the notice.
+  const [slowStart, setSlowStart] = useState(false);
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [trace, setTrace] = useState<RetrievalDebugResponse | null>(null);
   const [improvement, setImprovement] = useState<ImprovementResponse | null>(null);
@@ -94,10 +97,35 @@ export default function RelayPage() {
   const refreshStatus = useCallback(async () => {
     try {
       setStatus(await ragApi.status());
+      setStatusError(false);
     } catch {
-      setStatus(null);
+      setStatusError(true);
     }
   }, []);
+
+  const backendReady = Boolean(status?.lexical_index_exists) && !statusError;
+  const warming = !backendReady && (statusError || Boolean(status?.index_building) || (status === null && slowStart));
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSlowStart(true), 1500);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  // While the backend wakes or rebuilds, check again a few seconds after each answer (never overlapping).
+  useEffect(() => {
+    if (backendReady) return;
+    let cancelled = false;
+    let timer = 0;
+    const poll = async () => {
+      await refreshStatus();
+      if (!cancelled) timer = window.setTimeout(poll, 4000);
+    };
+    timer = window.setTimeout(poll, 4000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [backendReady, refreshStatus]);
 
   useEffect(() => {
     setWebgl(supportsWebGL());
@@ -138,7 +166,7 @@ export default function RelayPage() {
       setInputError(true);
       return;
     }
-    if (phase === "travel" || phase === "landing") return;
+    if (phase === "travel" || phase === "landing" || warming) return;
     setQuery(question);
     setInputError(false);
     setError(null);
@@ -182,6 +210,8 @@ export default function RelayPage() {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError(message);
       setPhase("error");
+      // A restart can happen mid-session; checking status restarts the warm-up polling if so.
+      void refreshStatus();
       addEvent({ type: "error", title: "Flight aborted", detail: message, severity: "error" });
     }
   }
@@ -351,7 +381,7 @@ export default function RelayPage() {
               {busy.improve ? "Reviewing" : "Review tuning"}
             </button>
             <span className={`rounded-full border px-3 py-1 font-mono text-[11px] uppercase tracking-[0.16em] ${ready ? "border-emerald-400/30 text-emerald-300" : "border-amber-400/30 text-amber-300"}`}>
-              {status ? `${status.indexed_chunks.toLocaleString()} chunks · ${ready ? "online" : "setup needed"}` : "Connecting"}
+              {warming ? "Warming up" : status ? `${status.indexed_chunks.toLocaleString()} chunks · ${ready ? "online" : "setup needed"}` : "Connecting"}
             </span>
           </div>
         </header>
@@ -370,6 +400,18 @@ export default function RelayPage() {
             </div>
 
             <form onSubmit={submit} className={`${glass} flex flex-col gap-3 p-4`}>
+              {warming ? (
+                <div role="status" className="flex items-start gap-3 rounded-xl border border-amber-300/25 bg-amber-300/10 p-3 text-sm leading-6 text-amber-50">
+                  <span aria-hidden="true" className="mt-2 h-2 w-2 shrink-0 animate-pulse rounded-full bg-amber-300" />
+                  <span>
+                    <span className="font-semibold">Warming up the relay.</span>{" "}
+                    {status?.index_building
+                      ? "Rebuilding the knowledge base, about 30 seconds."
+                      : "The free server sleeps when idle and takes about a minute to wake."}{" "}
+                    Sending unlocks automatically.
+                  </span>
+                </div>
+              ) : null}
               <label htmlFor="relay-query" className="text-sm font-medium text-white">Your question</label>
               <textarea
                 id="relay-query"
@@ -394,10 +436,10 @@ export default function RelayPage() {
               <div className="flex flex-wrap items-center gap-3">
                 <button
                   type="submit"
-                  disabled={flying}
+                  disabled={flying || warming}
                   className="flex min-h-12 items-center gap-2 rounded-lg bg-white px-5 font-mono text-xs font-semibold uppercase tracking-[0.2em] text-slate-900 transition-transform hover:-translate-y-0.5 disabled:cursor-wait disabled:opacity-70"
                 >
-                  {flying ? "In flight" : phase === "arrived" ? "Launch again" : "Send query"}
+                  {warming ? "Warming up…" : flying ? "In flight" : phase === "arrived" ? "Launch again" : "Send query"}
                   <ArrowRight aria-hidden="true" className="h-4 w-4" />
                 </button>
                 <span className="hidden font-mono text-[11px] uppercase tracking-[0.18em] text-slate-400 sm:inline">Enter to launch</span>
@@ -407,7 +449,7 @@ export default function RelayPage() {
                   <button
                     key={prompt}
                     type="button"
-                    disabled={flying}
+                    disabled={flying || warming}
                     onClick={() => void launch(prompt)}
                     className="min-h-9 rounded-full border border-white/15 px-3 text-xs text-slate-300 hover:border-white/35 hover:text-white disabled:opacity-50"
                   >
