@@ -6,6 +6,8 @@ export type StatusResponse = {
   retrieval_strategy: string;
   lexical_index_exists: boolean;
   indexed_chunks: number;
+  /** True when this deployment needs an admin token to rebuild the index. */
+  admin_required?: boolean;
 };
 
 export type QueryResponse = {

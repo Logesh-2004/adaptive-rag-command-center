@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     retrieval_confidence_threshold: float = Field(0.2, validation_alias="RETRIEVAL_CONFIDENCE_THRESHOLD", ge=0.0, le=1.0)
     rag_debug_logs: bool = Field(False, validation_alias="RAG_DEBUG_LOGS")
     log_max_bytes: int = Field(5 * 1024 * 1024, validation_alias="LOG_MAX_BYTES", ge=1024)
+    # Public-demo guards (see app/api/security.py); empty or 0 turns each one off.
+    proxy_secret: SecretStr | None = Field(None, validation_alias="PROXY_SECRET")
+    admin_token: SecretStr | None = Field(None, validation_alias="ADMIN_TOKEN")
+    query_rate_limit_per_minute: int = Field(0, validation_alias="QUERY_RATE_LIMIT_PER_MINUTE", ge=0)
+    daily_query_limit: int = Field(0, validation_alias="DAILY_QUERY_LIMIT", ge=0)
+    build_index_on_startup: bool = Field(True, validation_alias="BUILD_INDEX_ON_STARTUP")
 
     @property
     def active_generation_model(self) -> str:
@@ -45,6 +51,16 @@ class Settings(BaseSettings):
     @property
     def generation_provider_configured(self) -> bool:
         return self.groq_key_configured
+
+    @property
+    def proxy_secret_value(self) -> str | None:
+        value = self.proxy_secret.get_secret_value().strip() if self.proxy_secret else ""
+        return value or None
+
+    @property
+    def admin_token_value(self) -> str | None:
+        value = self.admin_token.get_secret_value().strip() if self.admin_token else ""
+        return value or None
 
     @property
     def groq_api_key_value(self) -> str | None:

@@ -100,10 +100,11 @@ export const ragApi = {
       method: "POST",
       body: JSON.stringify({}),
     }),
-  ingest: () =>
+  ingest: (adminToken?: string) =>
     request<IngestResponse>("/ingest", {
       method: "POST",
       body: JSON.stringify({}),
+      headers: adminToken ? { "X-Admin-Token": adminToken } : undefined,
     }),
   feedback: (query: string, answer: string, rating: number, comment?: string) =>
     request<FeedbackResponse>("/feedback", {

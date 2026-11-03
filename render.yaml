@@ -1,0 +1,26 @@
+# Render Blueprint for the FastAPI backend (New > Blueprint in the Render dashboard).
+# The dashboard runs on Vercel and reaches this service through its /rag-api proxy.
+services:
+  - type: web
+    name: adaptive-rag-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    # /status is the one endpoint that stays open without the proxy secret.
+    healthCheckPath: /status
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: GROQ_API_KEY
+        sync: false
+      # Render generates these two. Copy PROXY_SECRET into Vercel as RAG_PROXY_SECRET;
+      # keep ADMIN_TOKEN for the dashboard's Rebuild index button.
+      - key: PROXY_SECRET
+        generateValue: true
+      - key: ADMIN_TOKEN
+        generateValue: true
+      - key: QUERY_RATE_LIMIT_PER_MINUTE
+        value: "6"
+      - key: DAILY_QUERY_LIMIT
+        value: "300"
