@@ -11,6 +11,7 @@ from app.retrieval.retriever import clear_retrieval_cache, retrieve_adaptive
 from app.evaluation.evaluator import evaluate_answer
 from app.improvement.optimizer import run_improvement_cycle
 from app.feedback.store import store_feedback
+from app.api.security import rate_limited, require_admin, require_proxy
 from app.pipeline import (
     RETRIEVAL_STRATEGY,
     PipelineError,
@@ -35,6 +36,8 @@ from app.api.schemas import (
 )
 
 router = APIRouter(prefix="", tags=["adaptive-rag"])
+# /status stays open for host health checks; everything else is reachable only through the dashboard proxy.
+proxied = [Depends(require_proxy)]
 
 
 def _event(event_type: str, payload: dict) -> str:
@@ -51,10 +54,11 @@ def status(settings: Settings = Depends(get_settings)) -> StatusResponse:
         retrieval_strategy=RETRIEVAL_STRATEGY,
         lexical_index_exists=lexical_index_exists(settings),
         indexed_chunks=indexed_chunk_count(settings),
+        admin_required=settings.admin_token_value is not None,
     )
 
 
-@router.post("/ingest", response_model=IngestResponse)
+@router.post("/ingest", response_model=IngestResponse, dependencies=[*proxied, Depends(require_admin)])
 def ingest(settings: Settings = Depends(get_settings)) -> IngestResponse:
     start = perf_counter()
     try:
@@ -92,7 +96,7 @@ def ingest(settings: Settings = Depends(get_settings)) -> IngestResponse:
         raise HTTPException(status_code=500, detail={"status": "error", "message": "Document ingestion failed."})
 
 
-@router.post("/query", response_model=QueryResponse)
+@router.post("/query", response_model=QueryResponse, dependencies=[*proxied, Depends(rate_limited)])
 def query(request: QueryRequest, settings: Settings = Depends(get_settings)) -> QueryResponse:
     try:
         for event_type, payload in run_query_pipeline(request.query, settings, stream=False):
@@ -103,7 +107,7 @@ def query(request: QueryRequest, settings: Settings = Depends(get_settings)) -> 
     raise HTTPException(status_code=500, detail={"status": "error", "message": "Query pipeline ended without an answer."})
 
 
-@router.post("/query/stream")
+@router.post("/query/stream", dependencies=[*proxied, Depends(rate_limited)])
 def query_stream(request: QueryRequest, settings: Settings = Depends(get_settings)) -> StreamingResponse:
     def events():
         try:
@@ -115,7 +119,7 @@ def query_stream(request: QueryRequest, settings: Settings = Depends(get_setting
     return StreamingResponse(events(), media_type="application/x-ndjson")
 
 
-@router.post("/evaluate", response_model=EvaluationResponse)
+@router.post("/evaluate", response_model=EvaluationResponse, dependencies=proxied)
 def evaluate(request: EvaluationRequest, settings: Settings = Depends(get_settings)) -> EvaluationResponse:
     start = perf_counter()
     try:
@@ -152,7 +156,7 @@ def evaluate(request: EvaluationRequest, settings: Settings = Depends(get_settin
         return EvaluationResponse(status="warning", message="Evaluation unavailable")
 
 
-@router.post("/improve", response_model=ImprovementResponse)
+@router.post("/improve", response_model=ImprovementResponse, dependencies=proxied)
 def improve(settings: Settings = Depends(get_settings)) -> ImprovementResponse:
     start = perf_counter()
     try:
@@ -172,7 +176,7 @@ def improve(settings: Settings = Depends(get_settings)) -> ImprovementResponse:
     return ImprovementResponse(summary=summary, weak_records=weak_records, suggestions=suggestions)
 
 
-@router.post("/debug/retrieval", response_model=RetrievalDebugResponse)
+@router.post("/debug/retrieval", response_model=RetrievalDebugResponse, dependencies=proxied)
 def debug_retrieval_endpoint(request: RetrievalDebugRequest, settings: Settings = Depends(get_settings)) -> RetrievalDebugResponse:
     start = perf_counter()
     timings = TimingMetrics()
@@ -214,7 +218,7 @@ def debug_retrieval_endpoint(request: RetrievalDebugRequest, settings: Settings 
     )
 
 
-@router.post("/feedback")
+@router.post("/feedback", dependencies=proxied)
 def feedback(request: FeedbackRequest, settings: Settings = Depends(get_settings)) -> dict:
     start = perf_counter()
     try:

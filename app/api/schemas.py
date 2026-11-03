@@ -106,3 +106,4 @@ class StatusResponse(BaseModel):
     retrieval_strategy: str
     lexical_index_exists: bool
     indexed_chunks: int
+    admin_required: bool = False

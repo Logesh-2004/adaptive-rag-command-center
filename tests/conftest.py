@@ -67,6 +67,19 @@ def settings(corpus_dir: Path) -> Settings:
 
 
 @pytest.fixture
+def client(settings: Settings):
+    from fastapi.testclient import TestClient
+
+    from app.core.config import get_settings
+    from app.main import app
+
+    # Not used as a context manager, so the app lifespan (which reads the real .env) does not run.
+    app.dependency_overrides[get_settings] = lambda: settings
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
 def indexed_settings(settings: Settings) -> Settings:
     from app.ingestion.loader import ingest_documents
 

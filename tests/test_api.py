@@ -21,14 +21,6 @@ def _grounded_answer(query, documents, settings):
 
 
 @pytest.fixture
-def client(settings):
-    # Not used as a context manager, so the app lifespan (which reads the real .env) does not run.
-    app.dependency_overrides[get_settings] = lambda: settings
-    yield TestClient(app)
-    app.dependency_overrides.clear()
-
-
-@pytest.fixture
 def indexed_client(client):
     assert client.post("/ingest").status_code == 200
     return client

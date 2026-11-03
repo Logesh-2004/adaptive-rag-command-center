@@ -92,6 +92,26 @@ The home page (`/`) is a 3D relay built with Three.js through React Three Fiber:
 
 Query, evaluation, and feedback records are appended to `data/processed/*.jsonl` (not committed to git). Each file rotates to `<name>.1.jsonl` at `LOG_MAX_BYTES` (5 MB by default). Full prompts and retrieved passages are logged only when `RAG_DEBUG_LOGS=true`.
 
+## Deploy a public demo (Vercel + Render)
+
+The dashboard runs on Vercel and the FastAPI backend on Render, both on free plans.
+
+1. **Backend on Render.** In the Render dashboard choose **New > Blueprint** and pick this repository. `render.yaml` creates the `adaptive-rag-api` web service. Paste your Groq key into `GROQ_API_KEY` when asked. Render generates `PROXY_SECRET` and `ADMIN_TOKEN` for you.
+2. Once it is live, note the service URL (like `https://adaptive-rag-api.onrender.com`) and copy the generated `PROXY_SECRET` from the service's **Environment** tab.
+3. **Dashboard on Vercel.** In Vercel choose **Add New > Project**, import this repository (the Next.js preset is detected), and add two environment variables:
+   - `RAG_BACKEND_URL` = the Render service URL
+   - `RAG_PROXY_SECRET` = the `PROXY_SECRET` value from Render
+4. Deploy. The Vercel URL is the link to share.
+
+What the public demo protects:
+
+- The backend refuses requests that don't come through the dashboard's proxy (`PROXY_SECRET`); only `/status` stays open, for health checks.
+- Each visitor can ask 6 questions a minute, and the whole site 300 a day (`QUERY_RATE_LIMIT_PER_MINUTE`, `DAILY_QUERY_LIMIT`), so visitors can't exhaust your Groq quota.
+- **Rebuild index** asks for `ADMIN_TOKEN`. It is remembered only for that browser tab.
+- Your Groq key stays on Render and never reaches the browser.
+
+On Render's free plan the backend sleeps after about 15 idle minutes, and the first request after that takes up to a minute while it wakes. Its disk is also reset on each restart, so the backend rebuilds the search index from `data/raw/` at startup (`BUILD_INDEX_ON_STARTUP`), which takes about 20 seconds.
+
 ## Deployment notes
 
 Set `GROQ_API_KEY` as a server-side environment variable on the backend host. The dashboard can be deployed separately; set `RAG_BACKEND_URL` on the dashboard server to the backend URL (read only by the server-side proxy). The local BM25 index is stored on disk, so a deployment with ephemeral storage should persist that directory or run ingestion again after each fresh deploy.

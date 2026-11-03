@@ -1,11 +1,24 @@
 from contextlib import asynccontextmanager
 import logging
+import threading
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from app.api.router import router
 from app.core.config import get_settings
 from app.core.logger import debug_logger, log_event
+from app.ingestion.loader import ingest_documents
+from app.retrieval.lexical_index import lexical_index_exists
+from app.retrieval.retriever import clear_retrieval_cache
+
+
+def _build_index(settings) -> None:
+    try:
+        summary = ingest_documents(settings)
+        clear_retrieval_cache()
+        log_event(settings, "startup_ingest", {"status": "success", "chunks_created": summary["chunks_created"], "warnings": summary["warnings"]})
+    except Exception as exc:
+        log_event(settings, "startup_ingest_failure", {"status": "error", "error_type": type(exc).__name__, "error": str(exc)[:300]})
 
 
 @asynccontextmanager
@@ -16,6 +29,10 @@ async def lifespan(_app: FastAPI):
         handler.setFormatter(logging.Formatter("[RAG DEBUG] %(message)s"))
         debug_logger.addHandler(handler)
         debug_logger.setLevel(logging.DEBUG)
+    # Hosts with a fresh disk on every deploy (like Render's free plan) start without an index.
+    # Build it in the background so the server can answer health checks right away.
+    if settings.build_index_on_startup and not lexical_index_exists(settings):
+        threading.Thread(target=_build_index, args=(settings,), daemon=True, name="startup-ingest").start()
     if not settings.groq_key_configured:
         log_event(
             settings,

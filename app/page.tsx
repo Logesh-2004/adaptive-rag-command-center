@@ -19,6 +19,27 @@ const QUICK_STARTS = ["How do I diagnose an EV battery fault?", "What is adaptiv
 const headerButton =
   "inline-flex min-h-9 items-center gap-2 rounded-lg border border-white/15 bg-black/20 px-3 font-mono text-[11px] uppercase tracking-[0.16em] text-slate-200 backdrop-blur transition-colors hover:border-white/35 hover:text-white disabled:cursor-wait disabled:opacity-60";
 
+const ADMIN_TOKEN_KEY = "rag-admin-token";
+
+/** Remembers the admin token for this browser tab only, so a public visitor's tab never holds it. */
+const adminTokenStore = {
+  read: () => {
+    try {
+      return sessionStorage.getItem(ADMIN_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  },
+  write: (token: string | null) => {
+    try {
+      if (token) sessionStorage.setItem(ADMIN_TOKEN_KEY, token);
+      else sessionStorage.removeItem(ADMIN_TOKEN_KEY);
+    } catch {
+      // Storage can be unavailable (private windows); the token is then asked for each time.
+    }
+  },
+};
+
 function supportsWebGL() {
   try {
     const canvas = document.createElement("canvas");
@@ -186,9 +207,18 @@ export default function RelayPage() {
   );
 
   const rebuildIndex = useCallback(async () => {
+    let token: string | undefined;
+    if (status?.admin_required) {
+      token = adminTokenStore.read() ?? window.prompt("Rebuilding the index is admin-only on this site. Enter the admin token:")?.trim() ?? undefined;
+      if (!token) {
+        addEvent({ type: "system", title: "Rebuild cancelled", detail: "Rebuilding the index needs the admin token.", severity: "info" });
+        return;
+      }
+    }
     setBusy((current) => ({ ...current, ingest: true }));
     try {
-      const result = await ragApi.ingest();
+      const result = await ragApi.ingest(token);
+      if (token) adminTokenStore.write(token);
       const warnings = result.warnings.length ? ` ${result.warnings.length} file warning(s): ${result.warnings.slice(0, 2).join(" ")}` : "";
       addEvent({
         type: result.warnings.length ? "warning" : "system",
@@ -198,11 +228,13 @@ export default function RelayPage() {
       });
       await refreshStatus();
     } catch (caught) {
+      // A wrong token should be asked for again next time, not reused.
+      if (token) adminTokenStore.write(null);
       addEvent({ type: "error", title: "Index rebuild failed", detail: String(caught), severity: "error" });
     } finally {
       setBusy((current) => ({ ...current, ingest: false }));
     }
-  }, [addEvent, refreshStatus]);
+  }, [addEvent, refreshStatus, status?.admin_required]);
 
   const reviewTuning = useCallback(async () => {
     setBusy((current) => ({ ...current, improve: true }));
