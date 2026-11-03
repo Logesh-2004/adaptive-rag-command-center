@@ -1,5 +1,6 @@
 import json
 import math
+import threading
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,6 +61,19 @@ def build_bm25_stats(documents: list[Document]) -> BM25Stats:
 
 _STORE_CACHE: dict[str, BM25Store] = {}
 _INDEX_FILENAME = "chunks.json"
+# Set while the startup rebuild runs, so callers can say "warming up" instead of "missing".
+_BUILDING = threading.Event()
+
+
+def set_index_building(building: bool) -> None:
+    if building:
+        _BUILDING.set()
+    else:
+        _BUILDING.clear()
+
+
+def index_building() -> bool:
+    return _BUILDING.is_set()
 
 
 def index_file_path(settings: Settings) -> Path:

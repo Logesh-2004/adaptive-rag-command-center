@@ -100,3 +100,19 @@ def test_startup_builds_a_missing_index(corpus_dir, monkeypatch):
                 break
             time.sleep(0.1)
     assert lexical_index_exists(settings)
+
+
+def test_questions_during_the_startup_rebuild_get_a_warming_up_message(client):
+    from app.retrieval.lexical_index import set_index_building
+
+    set_index_building(True)
+    try:
+        assert client.get("/status").json()["index_building"] is True
+        response = client.post("/query", json={"query": "battery fault"})
+        assert response.status_code == 503
+        assert response.json()["error_code"] == "index_building"
+        events = [line for line in client.post("/query/stream", json={"query": "battery fault"}).text.splitlines() if line]
+        assert '"index_building"' in events[-1]
+    finally:
+        set_index_building(False)
+    assert client.get("/status").json()["index_building"] is False
