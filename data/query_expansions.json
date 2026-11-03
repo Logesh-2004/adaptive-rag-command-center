@@ -1,0 +1,13 @@
+{
+  "_comment": "Phrase -> extra search terms. When a phrase appears in a question, each entry adds one rewritten query. Keys starting with _ are ignored.",
+  "adaptive rag": [
+    "adaptive retrieval augmented generation corrective self-reflective dynamic retrieval",
+    "adaptive retrieval feedback reranking evaluation"
+  ],
+  "rag": ["retrieval augmented generation grounding"],
+  "self-rag": ["self reflective retrieval critique"],
+  "hallucination": ["unsupported claims grounding faithfulness"],
+  "llm": ["large language model"],
+  "ev": ["electric vehicle"],
+  "hyde": ["hypothetical document embeddings"]
+}

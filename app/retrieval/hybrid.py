@@ -1,136 +1,106 @@
 import hashlib
-import math
-import re
+import heapq
+from collections import Counter
 from copy import deepcopy
-from pathlib import Path
 from typing import Iterable
 
 from langchain_core.documents import Document
 
+from app.retrieval.lexical_index import BM25Store
+from app.retrieval.text import tokenize
 
-_STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "how", "in", "is", "it",
-    "of", "on", "or", "that", "the", "this", "to", "was", "what", "when", "where", "which",
-    "who", "why", "with",
-}
+__all__ = ["feedback_terms", "keyword_search", "reciprocal_rank_fusion", "tokenize"]
 
 
-def all_documents(lexical_index) -> list[Document]:
-    return [doc for doc in getattr(lexical_index, "documents", []) if isinstance(doc, Document)]
-
-
-def tokenize(text: str) -> list[str]:
-    return [token for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{1,}", text.lower()) if token not in _STOPWORDS]
-
-
-def keyword_search(lexical_index, query: str, k: int) -> list[Document]:
-    """Rank chunks with BM25, using only the locally indexed text."""
-    query_terms = tokenize(query)
-    documents = all_documents(lexical_index)
+def keyword_search(lexical_index: BM25Store, query: str, k: int, channel: str = "bm25") -> list[Document]:
+    """Rank chunks with BM25, reading only the postings of the query terms."""
+    query_terms = set(tokenize(query))
+    documents = lexical_index.documents
     if not query_terms or not documents:
         return []
 
-    tokenized_docs = [tokenize(doc.page_content) for doc in documents]
-    average_length = sum(map(len, tokenized_docs)) / max(1, len(tokenized_docs))
-    query_term_set = set(query_terms)
-    document_frequency = {
-        term: sum(1 for tokens in tokenized_docs if term in set(tokens))
-        for term in query_term_set
-    }
-
-    scored: list[Document] = []
+    stats = lexical_index.stats
     k1, b = 1.5, 0.75
-    total_docs = len(documents)
-    for doc, tokens in zip(documents, tokenized_docs):
-        if not tokens:
+    scores: dict[int, float] = {}
+    for term in query_terms:
+        postings = stats.postings.get(term)
+        if not postings:
             continue
-        term_counts: dict[str, int] = {}
-        for term in tokens:
-            if term in query_term_set:
-                term_counts[term] = term_counts.get(term, 0) + 1
-        score = 0.0
-        for term, frequency in term_counts.items():
-            df = document_frequency[term]
-            inverse_frequency = math.log(1.0 + (total_docs - df + 0.5) / (df + 0.5))
-            length_norm = frequency + k1 * (1.0 - b + b * len(tokens) / max(1.0, average_length))
-            score += inverse_frequency * frequency * (k1 + 1.0) / length_norm
-        if score > 0:
-            result = deepcopy(doc)
-            result.metadata["bm25_score"] = round(score, 6)
-            result.metadata["retrieval_channels"] = ["bm25"]
-            scored.append(result)
+        inverse_frequency = stats.idf(term)
+        for index, frequency in postings:
+            length_norm = frequency + k1 * (1.0 - b + b * stats.doc_lengths[index] / max(1.0, stats.average_length))
+            scores[index] = scores.get(index, 0.0) + inverse_frequency * frequency * (k1 + 1.0) / length_norm
 
-    scored.sort(key=lambda item: item.metadata.get("bm25_score", 0.0), reverse=True)
-    return scored[:k]
+    results: list[Document] = []
+    for index, score in heapq.nlargest(k, scores.items(), key=lambda item: item[1]):
+        source = documents[index]
+        result = Document(page_content=source.page_content, metadata=dict(source.metadata))
+        result.metadata["bm25_score"] = round(score, 6)
+        result.metadata["retrieval_channels"] = [channel]
+        results.append(result)
+    return results
 
 
-def priority_source_search(raw_data_dir: Path, query: str) -> list[Document]:
-    """Add selected RAG concept files when the query explicitly names them."""
-    query_lower = query.lower()
-    priority_files = []
-    if "adaptive" in query_lower:
-        priority_files.extend(["adaptive_rag.txt", "corrective_rag.txt", "self_reflective_rag.txt"])
-    if "corrective" in query_lower:
-        priority_files.append("corrective_rag.txt")
-
-    documents = []
-    for filename in dict.fromkeys(priority_files):
-        path = raw_data_dir / filename
-        if not path.is_file():
-            continue
-        text = path.read_text(encoding="utf-8", errors="ignore").strip()
-        for index, chunk in enumerate(_chunk_text(text), start=1):
-            documents.append(
-                Document(
-                    page_content=chunk,
-                    metadata={
-                        "source": str(path),
-                        "priority_source": True,
-                        "priority_rank": index,
-                        "retrieval_channels": ["priority_source"],
-                    },
-                )
-            )
-    return documents
-
-
-def _chunk_text(text: str, max_chars: int = 1200) -> list[str]:
-    paragraphs = [paragraph.strip() for paragraph in re.split(r"\n\s*\n", text) if paragraph.strip()]
-    chunks = []
-    current = ""
-    for paragraph in paragraphs:
-        if current and len(current) + len(paragraph) + 2 > max_chars:
-            chunks.append(current)
-            current = paragraph
-        else:
-            current = f"{current}\n\n{paragraph}".strip()
-    if current:
-        chunks.append(current)
-    return chunks[:4]
+def feedback_terms(
+    lexical_index: BM25Store,
+    documents: list[Document],
+    exclude: set[str],
+    n_terms: int = 5,
+    n_docs: int = 3,
+) -> list[str]:
+    """Pick distinctive terms shared by the top results (pseudo-relevance feedback)."""
+    stats = lexical_index.stats
+    top_docs = documents[:n_docs]
+    # A term must appear in at least two top results, so one off-topic hit cannot steer the expansion.
+    min_presence = min(2, len(top_docs))
+    weights: Counter[str] = Counter()
+    presence: Counter[str] = Counter()
+    for doc in top_docs:
+        counts = Counter(tokenize(doc.page_content))
+        length = sum(counts.values()) or 1
+        for term, frequency in counts.items():
+            # Terms found in a single chunk are usually names or noise rather than shared concepts.
+            if term in exclude or len(term) < 4 or stats.document_frequency(term) < 2:
+                continue
+            weights[term] += (frequency / length) * stats.idf(term)
+            presence[term] += 1
+    ranked = [term for term, _weight in weights.most_common() if presence[term] >= min_presence]
+    return ranked[:n_terms]
 
 
 def reciprocal_rank_fusion(result_sets: Iterable[list[Document]], k: int, rrf_k: int = 60) -> list[Document]:
+    """Fuse result lists by rank.
+
+    Raw BM25 scores grow with query length, so each list's scores are first scaled to its
+    own best hit. Only "bm25" lists count toward a passage's BM25 strength: the feedback
+    list adds recall through its rank, but its extra terms must not inflate scores.
+    """
     fused: dict[str, tuple[Document, float, set[str]]] = {}
     for docs in result_sets:
+        list_max = max((float(doc.metadata.get("bm25_score", 0.0)) for doc in docs), default=0.0)
         for rank, doc in enumerate(docs, start=1):
-            source_name = "priority_source" if doc.metadata.get("priority_source") else "bm25"
             doc_id = _doc_id(doc)
             existing_doc, existing_score, channels = fused.get(doc_id, (deepcopy(doc), 0.0, set()))
-            channels.add(source_name)
+            doc_channels = doc.metadata.get("retrieval_channels") or ["bm25"]
+            channels.update(doc_channels)
             score = existing_score + 1.0 / (rrf_k + rank)
-            best_bm25_score = max(
-                float(existing_doc.metadata.get("bm25_score", 0.0)),
-                float(doc.metadata.get("bm25_score", 0.0)),
-            )
+            best_raw = float(existing_doc.metadata.get("bm25_score", 0.0)) if existing_score else 0.0
+            best_relative = float(existing_doc.metadata.get("bm25_relative_score", 0.0)) if existing_score else 0.0
+            if "bm25" in doc_channels:
+                best_raw = max(best_raw, float(doc.metadata.get("bm25_score", 0.0)))
+                if list_max > 0:
+                    best_relative = max(best_relative, float(doc.metadata.get("bm25_score", 0.0)) / list_max)
             existing_doc.metadata.update(doc.metadata)
-            if best_bm25_score:
-                existing_doc.metadata["bm25_score"] = best_bm25_score
+            existing_doc.metadata["bm25_score"] = round(best_raw, 6)
+            existing_doc.metadata["bm25_relative_score"] = round(best_relative, 6)
             existing_doc.metadata["rrf_score"] = score
             existing_doc.metadata["retrieval_channels"] = sorted(channels)
             fused[doc_id] = (existing_doc, score, channels)
 
     ranked = [item[0] for item in sorted(fused.values(), key=lambda item: item[1], reverse=True)]
-    _normalize_metadata_scores(ranked, ("bm25_score", "rrf_score"))
+    _normalize_metadata_scores(ranked, ("bm25_relative_score", "rrf_score"))
+    for doc in ranked:
+        doc.metadata["bm25_norm"] = doc.metadata.pop("bm25_relative_norm", 0.0)
     return ranked[:k]
 
 

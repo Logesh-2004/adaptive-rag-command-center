@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { AlertTriangle, BadgeCheck, CheckCircle2, Clock3, Orbit, Rocket, SendHorizontal, Sparkles, XCircle } from "lucide-react";
+import { FormEvent, useEffect, useState } from "react";
+import { AlertTriangle, BadgeCheck, CheckCircle2, Clock3, Orbit, Rocket, SendHorizontal, Sparkles, ThumbsDown, ThumbsUp, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import type { QueryResponse } from "@/types/api";
 
@@ -20,6 +21,10 @@ const journeyCopy: Record<JourneyStage, { title: string; detail: string }> = {
   arrived: { title: "Docked at the answer station", detail: "The answer has landed with its evidence and quality signals." },
   error: { title: "Signal interrupted", detail: "Edit the question or resend it to start a new journey." },
 };
+
+// Feedback is stored on the backend's 1-5 scale; /improve treats 1-2 as unhelpful.
+const HELPFUL_RATING = 5;
+const UNHELPFUL_RATING = 1;
 
 const promptSuggestions = ["Explain adaptive RAG", "Reduce unsupported answers", "Compare RAG methods"];
 
@@ -96,14 +101,19 @@ export function ChatConsole({
   latency,
   journeyStage = "idle",
   onSubmit,
+  onFeedback,
 }: {
   response?: QueryResponse | null;
   loading: boolean;
   latency?: number | null;
   journeyStage?: JourneyStage;
   onSubmit: (query: string) => void;
+  onFeedback?: (rating: number, comment?: string) => Promise<boolean>;
 }) {
   const [query, setQuery] = useState("What is adaptive RAG?");
+  const [rating, setRating] = useState<number | null>(null);
+  const [comment, setComment] = useState("");
+  const [feedbackState, setFeedbackState] = useState<"idle" | "sending" | "sent">("idle");
   const stage = journeyCopy[journeyStage];
   const isMoving = ["launching", "retrieving", "crossing", "generating", "landing"].includes(journeyStage);
   const hasQuery = Boolean(response?.query);
@@ -111,7 +121,21 @@ export function ChatConsole({
   const groundingScore = response?.grounding_score ?? response?.grounding ?? response?.evaluation?.grounding_score ?? response?.evaluation?.grounding;
   const stageStatus = journeyStage === "arrived" ? "Docked" : journeyStage === "error" ? "Signal lost" : isMoving ? "In transit" : "Awaiting signal";
 
-  function useSuggestion(prompt: string) {
+  useEffect(() => {
+    setRating(null);
+    setComment("");
+    setFeedbackState("idle");
+  }, [response?.query, response?.answer]);
+
+  async function sendFeedback(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (rating == null || !onFeedback || feedbackState === "sending") return;
+    setFeedbackState("sending");
+    const saved = await onFeedback(rating, comment.trim() || undefined);
+    setFeedbackState(saved ? "sent" : "idle");
+  }
+
+  function applySuggestion(prompt: string) {
     setQuery(prompt);
     if (!loading) onSubmit(prompt);
   }
@@ -174,7 +198,7 @@ export function ChatConsole({
                 <p className="metric-label">Quick starts</p>
                 <div className="prompt-suggestion-list">
                   {promptSuggestions.map((prompt) => (
-                    <button key={prompt} type="button" onClick={() => useSuggestion(prompt)} disabled={loading} className="prompt-suggestion">
+                    <button key={prompt} type="button" onClick={() => applySuggestion(prompt)} disabled={loading} className="prompt-suggestion">
                       <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
                       <span>{prompt}</span>
                     </button>
@@ -290,6 +314,7 @@ export function ChatConsole({
                       ["Rank", response.timings.ranking_ms],
                       ["Generate", response.timings.generation_ms],
                       ["Evaluate", response.timings.evaluation_ms],
+                      ...(response.timings.correction_ms ? [["Correct", response.timings.correction_ms]] : []),
                       ["Total", response.timings.total_ms],
                     ].map(([label, value]) => (
                       <div key={label} className="timing-chip">
@@ -297,6 +322,56 @@ export function ChatConsole({
                         <strong>{Math.round(Number(value))} ms</strong>
                       </div>
                     ))}
+                  </div>
+                ) : null}
+                {onFeedback && journeyStage === "arrived" ? (
+                  <div className="mt-3 space-y-2" role="group" aria-label="Rate this answer">
+                    {feedbackState === "sent" ? (
+                      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <CheckCircle2 aria-hidden="true" className="h-3.5 w-3.5 text-success" />
+                        Thanks, your feedback was saved.
+                      </p>
+                    ) : (
+                      <>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="metric-label">Was this helpful?</span>
+                          <Button
+                            type="button"
+                            variant={rating === HELPFUL_RATING ? "secondary" : "ghost"}
+                            size="sm"
+                            aria-pressed={rating === HELPFUL_RATING}
+                            onClick={() => setRating(HELPFUL_RATING)}
+                          >
+                            <ThumbsUp aria-hidden="true" className="h-4 w-4" />
+                            Helpful
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={rating === UNHELPFUL_RATING ? "secondary" : "ghost"}
+                            size="sm"
+                            aria-pressed={rating === UNHELPFUL_RATING}
+                            onClick={() => setRating(UNHELPFUL_RATING)}
+                          >
+                            <ThumbsDown aria-hidden="true" className="h-4 w-4" />
+                            Not helpful
+                          </Button>
+                        </div>
+                        {rating != null ? (
+                          <form onSubmit={sendFeedback} className="flex gap-2">
+                            <Input
+                              value={comment}
+                              onChange={(event) => setComment(event.target.value)}
+                              placeholder="Optional comment"
+                              aria-label="Feedback comment"
+                              maxLength={1000}
+                            />
+                            <Button type="submit" size="sm" disabled={feedbackState === "sending"}>
+                              {feedbackState === "sending" ? "Sending" : "Send"}
+                            </Button>
+                          </form>
+                        ) : null}
+                      </>
+                    )}
                   </div>
                 ) : null}
               </>

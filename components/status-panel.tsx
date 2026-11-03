@@ -1,9 +1,20 @@
-import { Activity, Database, Server } from "lucide-react";
+import { Activity, Database, DatabaseZap, Server } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { StatusResponse } from "@/types/api";
 
-export function StatusPanel({ status, loading }: { status?: StatusResponse | null; loading: boolean }) {
+export function StatusPanel({
+  status,
+  loading,
+  rebuilding,
+  onRebuild,
+}: {
+  status?: StatusResponse | null;
+  loading: boolean;
+  rebuilding: boolean;
+  onRebuild: () => void;
+}) {
   const items = [
     {
       label: "Generation",
@@ -37,10 +48,16 @@ export function StatusPanel({ status, loading }: { status?: StatusResponse | nul
           <p className="section-kicker">System health</p>
           <CardTitle className="mt-1">Runtime</CardTitle>
         </div>
-        <Badge className={configured ? "gap-2 text-success" : "gap-2 text-warning"}>
-          <span className={configured ? "status-dot" : "h-2 w-2 rounded-full bg-warning"} aria-hidden="true" />
-          {loading ? "Checking" : configured ? "Configured" : status ? "Action needed" : "Waiting"}
-        </Badge>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="outline" size="sm" onClick={onRebuild} disabled={rebuilding || !status}>
+            <DatabaseZap aria-hidden="true" className={rebuilding ? "h-4 w-4 animate-pulse" : "h-4 w-4"} />
+            {rebuilding ? "Rebuilding" : "Rebuild index"}
+          </Button>
+          <Badge className={configured ? "gap-2 text-success" : "gap-2 text-warning"}>
+            <span className={configured ? "status-dot" : "h-2 w-2 rounded-full bg-warning"} aria-hidden="true" />
+            {loading ? "Checking" : configured ? "Configured" : status ? "Action needed" : "Waiting"}
+          </Badge>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="grid gap-3 sm:grid-cols-3">

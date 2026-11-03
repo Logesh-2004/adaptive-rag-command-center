@@ -1,11 +1,34 @@
 import json
-from dataclasses import dataclass
+import math
+from collections import Counter
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from langchain_core.documents import Document
 
 from app.core.config import Settings
+from app.retrieval.text import tokenize
+
+
+@dataclass
+class BM25Stats:
+    """Inverted index over the corpus: term -> [(document index, term frequency)]."""
+
+    postings: dict[str, list[tuple[int, int]]]
+    doc_lengths: list[int]
+    average_length: float
+
+    @property
+    def total_docs(self) -> int:
+        return len(self.doc_lengths)
+
+    def document_frequency(self, term: str) -> int:
+        return len(self.postings.get(term, ()))
+
+    def idf(self, term: str) -> float:
+        df = self.document_frequency(term)
+        return math.log(1.0 + (self.total_docs - df + 0.5) / (df + 0.5))
 
 
 @dataclass
@@ -13,6 +36,26 @@ class BM25Store:
     """Small persisted corpus used by the local BM25 retriever."""
 
     documents: list[Document]
+    _stats: BM25Stats | None = field(default=None, repr=False, compare=False)
+
+    @property
+    def stats(self) -> BM25Stats:
+        """Build the inverted index once, on first use, and reuse it for every query."""
+        if self._stats is None:
+            self._stats = build_bm25_stats(self.documents)
+        return self._stats
+
+
+def build_bm25_stats(documents: list[Document]) -> BM25Stats:
+    postings: dict[str, list[tuple[int, int]]] = {}
+    doc_lengths: list[int] = []
+    for index, doc in enumerate(documents):
+        tokens = tokenize(doc.page_content)
+        doc_lengths.append(len(tokens))
+        for term, frequency in Counter(tokens).items():
+            postings.setdefault(term, []).append((index, frequency))
+    average_length = sum(doc_lengths) / max(1, len(doc_lengths))
+    return BM25Stats(postings=postings, doc_lengths=doc_lengths, average_length=average_length)
 
 
 _STORE_CACHE: dict[str, BM25Store] = {}

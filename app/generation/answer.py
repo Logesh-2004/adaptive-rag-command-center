@@ -5,7 +5,7 @@ import requests
 from langchain_core.documents import Document
 
 from app.core.config import Settings
-from app.core.logger import log_event
+from app.core.logger import log_debug_event
 from app.generation.context import compress_context
 
 
@@ -46,6 +46,8 @@ def stream_answer(query: str, documents: List[Document], settings: Settings) -> 
         stream=True,
     ) as response:
         response.raise_for_status()
+        # The event stream is UTF-8, but requests assumes ISO-8859-1 for text/* responses without a charset.
+        response.encoding = "utf-8"
         for line in response.iter_lines(decode_unicode=True):
             if not line:
                 continue
@@ -119,6 +121,8 @@ def build_context(documents: List[Document]) -> str:
 
 
 def _debug_generation(settings: Settings, query: str, documents: List[Document], messages: list[dict[str, str]]) -> None:
+    if not settings.rag_debug_logs:
+        return
     context = build_context(documents)
     prompt = "\n\n".join(message["content"] for message in messages)
     payload = {
@@ -138,11 +142,8 @@ def _debug_generation(settings: Settings, query: str, documents: List[Document],
         "final_prompt": prompt,
         "prompt_chars": len(prompt),
     }
-    print("[RAG DEBUG] generation_prompt", json.dumps(payload, ensure_ascii=False))
-    log_event(settings, "generation_prompt_debug", payload)
+    log_debug_event(settings, "generation_prompt_debug", payload)
 
 
 def _debug_raw_response(settings: Settings, answer: str) -> None:
-    payload = {"provider": "groq", "raw_llm_response": answer}
-    print("[RAG DEBUG] raw_llm_response", json.dumps(payload, ensure_ascii=False))
-    log_event(settings, "generation_response_debug", payload)
+    log_debug_event(settings, "generation_response_debug", {"provider": "groq", "raw_llm_response": answer})

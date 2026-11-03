@@ -1029,7 +1029,9 @@
   }
 
   .answer-timings {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: none;
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(0, 1fr);
   }
 }
 
@@ -1259,7 +1261,9 @@
 
 .dashboard-content {
   perspective: 1700px;
-  transform-style: preserve-3d;
+  /* Keep this flat: with preserve-3d, panels tilted by rotateX sink behind this container in
+     hit-testing, which makes the controls in their upper half unclickable. Each panel's own
+     perspective() still renders the tilt. */
 }
 
 .glass-panel {
@@ -1623,4 +1627,56 @@
   .answer-dock:hover {
     transform: none;
   }
+}
+
+@keyframes relay-rise {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: none; }
+}
+
+.relay-rise {
+  animation: relay-rise 0.5s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .relay-rise { animation: none; }
+}
+
+@keyframes relay-flash {
+  0% { opacity: 0; }
+  20% { opacity: 0.2; }
+  100% { opacity: 0; }
+}
+
+.relay-flash {
+  animation: relay-flash 0.5s ease-out both;
+}
+
+@keyframes universe-title {
+  0% { opacity: 0; letter-spacing: 0.35em; filter: blur(8px); transform: scale(1.06); }
+  16% { opacity: 1; letter-spacing: 0; filter: blur(0); transform: none; }
+  74% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-8px); }
+}
+
+.universe-title {
+  animation: universe-title 2.9s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  text-shadow: 0 2px 30px rgba(0, 0, 0, 0.6);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .universe-title { animation: relay-rise 0.3s ease-out both; }
+}
+
+@keyframes stat-callout {
+  from { opacity: 0; filter: blur(6px); }
+  to { opacity: 1; filter: none; }
+}
+
+.stat-callout {
+  animation: stat-callout 0.6s ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stat-callout { animation: none; }
 }

@@ -32,7 +32,8 @@ Keep this terminal open while using the app:
 Set-Location -LiteralPath "C:\Users\Logesh\project\adaptive-rag-system"
 npm run dev
 
-Dashboard: http://localhost:3000
+Dashboard (3D relay): http://localhost:3000
+Classic flat dashboard: http://localhost:3000/classic
 
 
 OPTIONAL — REBUILD THE DOCUMENT INDEX
@@ -41,5 +42,13 @@ Run this after adding/changing files in data\raw or changing chunk settings.
 Start the backend first, then run this in another PowerShell terminal:
 
 Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/ingest"
+
+Or click "Rebuild index" in the dashboard header.
+
+
+OPTIONAL - RUN THE TESTS
+------------------------
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest
 
 The current BM25 index is stored at vector_db\bm25_store\chunks.json.
